@@ -9,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId "com.campfire.canvas.livingpainting"
-        minSdk 26 // Android 8.0: adaptive icons are native here, so no binary PNG fallbacks are ever needed
+        minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName "1.0-cozy"
+        versionCode 2
+        versionName "1.1-cozy"
     }
 
     buildTypes {
@@ -29,7 +29,6 @@ android {
 
 dependencies {
     implementation 'androidx.core:core-ktx:1.13.1'
-    implementation 'androidx.appcompat:appcompat:1.7.0' // Supplies Theme.AppCompat.NoActionBar promised by the Manifest
     implementation 'androidx.activity:activity-compose:1.9.0'
     implementation 'androidx.activity:activity-ktx:1.9.0'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.3'
@@ -38,5 +37,5 @@ dependencies {
     implementation 'androidx.compose.ui:ui-graphics'
     implementation 'androidx.compose.foundation:foundation'
     implementation 'androidx.compose.material3:material3'
-    implementation 'androidx.compose.material:material-icons-extended' // The Escape Hatch gear glyph
+    // DEFUSED: appcompat and material-icons-extended removed. Fewer foreign libraries, fewer foreign bugs.
 }
