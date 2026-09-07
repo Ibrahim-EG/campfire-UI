@@ -70,7 +70,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -82,8 +81,6 @@ import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -168,7 +165,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         val flameScale = (logsBurning.value / 5f).coerceAtLeast(0.1f)
         val time = viewModel.cinematicTime.value / 1_000_000_000f
 
-        // Load Assets
         val pineDrawable = remember { ContextCompat.getDrawable(context, R.drawable.asset_pine) }
         val stoneDrawable = remember { ContextCompat.getDrawable(context, R.drawable.asset_stone) }
         val logDrawable = remember { ContextCompat.getDrawable(context, R.drawable.asset_log) }
@@ -204,22 +200,19 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 val sunX = size.width * (0.5f + 0.4f * cos(sunAngle)).toFloat()
                 val sunY = horizonY - (size.height * 0.4f * sin(sunAngle)).toFloat()
                 
-                // Dynamic Global Light Color
                 val globalLightColor = when {
-                    effectiveElevation > 30 -> Color(0xFFFFD54F) // Day Gold
-                    effectiveElevation > 0 -> Color(0xFFFF7043)  // Dusk Madder
-                    effectiveElevation > -30 -> Color(0xFFBA68C8) // Twilight Mauve
-                    else -> Color(0xFF90A4AE)                    // Night Silver
+                    effectiveElevation > 30 -> Color(0xFFFFD54F) 
+                    effectiveElevation > 0 -> Color(0xFFFF7043)  
+                    effectiveElevation > -30 -> Color(0xFFBA68C8) 
+                    else -> Color(0xFF90A4AE)                    
                 }
 
-                // --- LAYER 1: SKY ---
                 val skyTop = if (isDay) Color(0xFF4A708B) else Color(0xFF0B1021)
                 val skyMid = if (isDay) Color(0xFF87CEEB) else Color(0xFF2A3B5C)
                 val skyBottom = if (isDay) Color(0xFFFFE082) else Color(0xFF8C6E5D)
                 drawRect(brush = Brush.verticalGradient(listOf(skyTop, skyMid, skyBottom)))
                 drawCircle(Brush.radialGradient(listOf(globalLightColor.copy(alpha = 0.5f), Color.Transparent), radius = size.width * 0.6f), center = Offset(sunX, sunY))
 
-                // Celestial Body
                 if (isDay) {
                     drawCircle(Brush.radialGradient(listOf(Color.White, globalLightColor, Color.Transparent), radius = size.width * 0.06f), center = Offset(sunX, sunY))
                 } else {
@@ -227,14 +220,12 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     drawCircle(Brush.radialGradient(listOf(globalLightColor, globalLightColor.copy(alpha = 0.5f), Color.Transparent), radius = size.width * 0.04f), center = Offset(sunX, moonY))
                 }
 
-                // --- LAYER 2: MOUNTAINS ---
                 val mtnBack = Path().apply { moveTo(0f, horizonY); cubicTo(size.width*0.2f, horizonY-120f, size.width*0.4f, horizonY-180f, size.width*0.6f, horizonY-90f); cubicTo(size.width*0.8f, horizonY-20f, size.width*0.9f, horizonY-140f, size.width, horizonY-60f); lineTo(size.width, horizonY); close() }
-                drawPath(mtnBack, skyMid.copy(alpha = 0.6f)) // Bleeds into sky
+                drawPath(mtnBack, skyMid.copy(alpha = 0.6f)) 
 
                 val mtnFront = Path().apply { moveTo(0f, horizonY); cubicTo(size.width*0.25f, horizonY-50f, size.width*0.45f, horizonY-90f, size.width*0.65f, horizonY-40f); cubicTo(size.width*0.8f, horizonY-10f, size.width*0.95f, horizonY-60f, size.width, horizonY); lineTo(size.width, horizonY); close() }
                 drawPath(mtnFront, Color(0xFF0A1118))
 
-                // --- LAYER 3: LAKE ---
                 drawRect(Color(0xFF0B1320), topLeft = Offset(0f, horizonY), size = Size(size.width, lakeBottom - horizonY))
                 val reflectWidth = 120f
                 drawRect(Brush.verticalGradient(listOf(globalLightColor.copy(alpha = 0.5f), Color.Transparent), startY = horizonY, endY = lakeBottom), topLeft = Offset(sunX - reflectWidth/2, horizonY), size = Size(reflectWidth, lakeBottom - horizonY))
@@ -244,20 +235,15 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     drawLine(globalLightColor.copy(alpha = 0.4f - i*0.02f), start = Offset(sunX - 50f + wave, y), end = Offset(sunX + 50f + wave, y), strokeWidth = 2f, cap = StrokeCap.Round)
                 }
 
-                // --- LAYER 4: HIGH HILL ---
                 val hillPath = Path().apply { moveTo(0f, size.height); lineTo(0f, size.height*0.85f); cubicTo(size.width*0.2f, size.height*0.75f, size.width*0.35f, size.height*0.82f, size.width*0.5f, size.height*0.82f); cubicTo(size.width*0.65f, size.height*0.82f, size.width*0.8f, size.height*0.90f, size.width, size.height*0.85f); lineTo(size.width, size.height); close() }
                 drawPath(hillPath, Brush.verticalGradient(listOf(Color(0xFF2E4028), Color(0xFF0A120B))))
 
-                // --- LAYER 5: IMPASTO ASSETS (Trees, Stones, Logs) ---
-                // Calculate Fire Light Influence for Color Bleeding
-                val fireLightColor = Color(0xFFFF8A65) // Warm Firelight
+                val fireLightColor = Color(0xFFFF8A65) 
                 
-                // Draw Trees (Background)
                 drawImpastoAsset(pineDrawable, Offset(size.width * 0.1f, horizonY - 150f), 150f, globalLightColor, fireCenter, fireLightColor)
                 drawImpastoAsset(pineDrawable, Offset(size.width * 0.85f, horizonY - 180f), 180f, globalLightColor, fireCenter, fireLightColor)
-                drawImpastoAsset(pineDrawable, Offset(size.width * 0.75f, size.height * 0.78f), 220f, globalLightColor, fireCenter, fireLightColor) // Foreground tree
+                drawImpastoAsset(pineDrawable, Offset(size.width * 0.75f, size.height * 0.78f), 220f, globalLightColor, fireCenter, fireLightColor) 
 
-                // Draw Stones
                 for (i in 0 until 10) {
                     val angle = i * (2 * PI / 10)
                     val stoneX = fireCenter.x + 120f * cos(angle).toFloat()
@@ -265,15 +251,11 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     drawImpastoAsset(stoneDrawable, Offset(stoneX - 30f, stoneY - 20f), 60f, globalLightColor, fireCenter, fireLightColor)
                 }
 
-                // --- LAYER 6: FIRE & CHIAROSCURO ---
-                // The massive warm glow that bleeds over the grass and stones
                 drawCircle(Brush.radialGradient(listOf(fireLightColor.copy(alpha = 0.6f * flameScale), Color.Transparent), center = fireCenter, radius = 600f * flameScale))
 
-                // Base Logs
                 drawImpastoAsset(logDrawable, Offset(fireCenter.x - 60f, fireCenter.y - 10f), 120f, fireLightColor, fireCenter, fireLightColor)
                 drawImpastoAsset(logDrawable, Offset(fireCenter.x - 40f, fireCenter.y - 25f), 100f, fireLightColor, fireCenter, fireLightColor)
 
-                // Flame
                 if (logsBurning.value > 0) {
                     val flicker = sin(time * 10) * 10f * flameScale
                     val flamePath = Path().apply {
@@ -287,19 +269,16 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     drawPath(flamePath, Color.White, style = Stroke(width = 15f * flameScale)) 
                 }
 
-                // Wood Stack
                 woodStack.forEachIndexed { index, pos ->
                     if (index != draggingLogIndex) drawImpastoAsset(logDrawable, pos, 80f, globalLightColor, fireCenter, fireLightColor)
                 }
                 if (draggingLogIndex != -1) drawImpastoAsset(logDrawable, woodStack[draggingLogIndex] + dragOffset, 80f, globalLightColor, fireCenter, fireLightColor)
 
-                // Global Circadian Wash
                 val nightIntensity = (1f - (effectiveElevation + 90f) / 180f).coerceIn(0f, 0.6f)
                 drawRect(color = Color(0xFF050814).copy(alpha = nightIntensity))
             } catch (e: Exception) { }
         }
 
-        // UI Overlays (Blackbox, Escape Hatch, Satchel)
         val blackboxTrace = remember { context.getSharedPreferences("blackbox", Context.MODE_PRIVATE).getString("last_crash", null) }
         var showBlackbox by remember { mutableStateOf(blackboxTrace != null) }
         if (showBlackbox && blackboxTrace != null) {
@@ -322,26 +301,24 @@ fun DrawScope.drawImpastoAsset(drawable: Drawable?, topLeft: Offset, height: Flo
     if (drawable == null) return
     val bmp = drawable.toBitmap()
     val aspect = bmp.width.toFloat() / bmp.height.toFloat()
-    val drawSize = Size(height * aspect, height)
     
     // Calculate distance to fire for local light bleeding
     val distToFire = kotlin.math.hypot(topLeft.x - fireCenter.x, topLeft.y - fireCenter.y)
     val fireInfluence = (1f / (1f + distToFire * 0.005f)).coerceIn(0f, 1f)
     
-    // Mix Global Light (Sun/Moon) with Local Light (Fire)
-    val mixedLight = Color(
-        red = (globalLight.red * (1 - fireInfluence) + fireLight.red * fireInfluence).toInt(),
-        green = (globalLight.green * (1 - fireInfluence) + fireLight.green * fireInfluence).toInt(),
-        blue = (globalLight.blue * (1 - fireInfluence) + fireLight.blue * fireInfluence).toInt(),
-        alpha = 255
-    )
+    // DEFUSED: Compose Color properties (red, green, blue) are Floats from 0.0 to 1.0.
+    // We strictly use Float math (1f instead of 1) to prevent compiler type mismatch errors.
+    val r = globalLight.red * (1f - fireInfluence) + fireLight.red * fireInfluence
+    val g = globalLight.green * (1f - fireInfluence) + fireLight.green * fireInfluence
+    val b = globalLight.blue * (1f - fireInfluence) + fireLight.blue * fireInfluence
+    val mixedLight = Color(r, g, b, 1f)
 
     // 1. Shadow Pass (Dark, offset down/right)
-    drawImage(bmp.asImageBitmap(), topLeft = topLeft + Offset(4f, 6f), colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 100)))
+    drawImage(bmp.asImageBitmap(), topLeft = topLeft + Offset(4f, 6f), colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.4f)))
     // 2. Base Pass (Tinted with mixed light)
     drawImage(bmp.asImageBitmap(), topLeft = topLeft, colorFilter = ColorFilter.tint(mixedLight))
     // 3. Highlight Pass (Bright, offset up/left, low alpha for impasto edge)
-    drawImage(bmp.asImageBitmap(), topLeft = topLeft + Offset(-2f, -2f), colorFilter = ColorFilter.tint(Color.White.copy(alpha = (60 * fireInfluence).toInt())))
+    drawImage(bmp.asImageBitmap(), topLeft = topLeft + Offset(-2f, -2f), colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.3f * fireInfluence)))
 }
 
 @Composable
