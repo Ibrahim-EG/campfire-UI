@@ -64,14 +64,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -79,10 +76,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -94,7 +92,7 @@ class MainActivity : ComponentActivity() {
         installCrashBlackBox() 
         super.onCreate(savedInstanceState)
         
-        // Re-enabled Location Request: Gracefully degrades if denied
+        // Request Location for true astronomical solar tracking
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 100)
         }
@@ -159,10 +157,10 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         }
 
         val size = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
+        
+        // Composition Layout (Wide View Optimized)
         val horizonY = size.height * 0.55f
         val lakeBottom = size.height * 0.75f
-
-        // The Campfire sits on the peak of the high hill
         val fireX = size.width * 0.5f
         val fireY = size.height * 0.82f 
         val fireCenter = Offset(fireX, fireY)
@@ -179,18 +177,18 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
 
         val isDrawerOpen = remember { mutableStateOf(false) }
         val logsBurning = viewModel.logsBurning
+        val flameScale = (logsBurning.value / 5f).coerceAtLeast(0.1f) // Base embers always glow
 
         LaunchedEffect(logsBurning.value) {
             audioEngine.updateFireIntensity(logsBurning.value / 5f)
         }
 
-        // THE CANVAS: Wrapped in a graphicsLayer to apply the Circadian Color Matrix to the ENTIRE painting uniformly
+        // Time accumulator for water ripples and fire flickering
+        val time = viewModel.cinematicTime.value / 1_000_000_000f
+
         androidx.compose.foundation.Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    colorFilter = ColorFilter.colorMatrix(ColorMatrix(getCircadianMatrix(effectiveElevation)))
-                }
                 .pointerInput(Unit) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = { offset ->
@@ -223,152 +221,193 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 }
         ) {
             try {
-                // --- LAYER 1: THE SKY ---
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF0B1021), // Deep night zenith
-                            Color(0xFF2A3B5C), // Mid-sky twilight
-                            Color(0xFF8C6E5D)  // Horizon dusk glow
-                        )
-                    )
-                )
+                // ==========================================
+                // THE MASTERPIECE ENGINE
+                // ==========================================
 
-                // --- LAYER 2: CELESTIAL BODIES ---
+                val isDay = effectiveElevation > 0
                 val sunAngle = (effectiveElevation / 90f) * Math.PI
                 val sunX = size.width * (0.5f + 0.4f * cos(sunAngle)).toFloat()
                 val sunY = horizonY - (size.height * 0.4f * sin(sunAngle)).toFloat()
                 
-                val isDay = effectiveElevation > 0
-                val celestialColor = if (isDay) Color(0xFFFFD700) else Color(0xFFE0E8F0)
-                val celestialY = if (isDay) sunY else (horizonY - (size.height * 0.3f * sin(sunAngle + PI)).toFloat())
+                // Dynamic Light Color: Shifts from Cool Silver (Night) to Madder Lake (Dusk) to Warm Gold (Day)
+                val lightColor = when {
+                    effectiveElevation > 30 -> Color(0xFFFFD54F) // Crisp Day Gold
+                    effectiveElevation > 0 -> Color(0xFFFF7043)  // Dusk Madder Lake / Gamboge
+                    effectiveElevation > -30 -> Color(0xFFBA68C8) // Twilight Mauve
+                    else -> Color(0xFFB0BEC5)                    // Night Cool Silver
+                }
 
+                // --- LAYER 1: THE CHROMATIC SKYDOME ---
+                val skyTop = if (isDay) Color(0xFF4A708B) else Color(0xFF0B1021)
+                val skyMid = if (isDay) Color(0xFF87CEEB) else Color(0xFF2A3B5C)
+                val skyBottom = if (isDay) Color(0xFFFFE082) else Color(0xFF8C6E5D)
+                
+                drawRect(brush = Brush.verticalGradient(listOf(skyTop, skyMid, skyBottom)))
+
+                // Sun/Moon Aura (Color Bleeding into the sky)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(lightColor.copy(alpha = 0.4f), Color.Transparent),
+                        radius = size.width * 0.5f
+                    ),
+                    center = Offset(sunX, sunY)
+                )
+
+                // Celestial Body
                 if (isDay) {
-                    drawCircle(Brush.radialGradient(listOf(Color.White, celestialColor, Color.Transparent), radius = size.width * 0.08f), center = Offset(sunX, celestialY))
+                    drawCircle(Brush.radialGradient(listOf(Color.White, lightColor, Color.Transparent), radius = size.width * 0.06f), center = Offset(sunX, sunY))
                 } else {
-                    drawCircle(Brush.radialGradient(listOf(celestialColor, celestialColor.copy(alpha = 0.5f), Color.Transparent), radius = size.width * 0.06f), center = Offset(sunX, celestialY))
+                    val moonY = horizonY - (size.height * 0.3f * sin(sunAngle + PI)).toFloat()
+                    drawCircle(Brush.radialGradient(listOf(lightColor, lightColor.copy(alpha = 0.5f), Color.Transparent), radius = size.width * 0.04f), center = Offset(sunX, moonY))
                 }
 
-                // --- LAYER 3: DISTANT MOUNTAINS ---
-                val mountainPath = Path().apply {
+                // --- LAYER 2: ATMOSPHERIC MOUNTAINS (Color Bleeding) ---
+                // Back Layer: Bleeds heavily into the sky (low contrast, cool tint)
+                val backMountain = Path().apply {
                     moveTo(0f, horizonY)
-                    cubicTo(size.width * 0.2f, horizonY - 100f, size.width * 0.3f, horizonY - 150f, size.width * 0.5f, horizonY - 80f)
-                    cubicTo(size.width * 0.7f, horizonY - 10f, size.width * 0.8f, horizonY - 120f, size.width, horizonY - 40f)
-                    lineTo(size.width, horizonY)
-                    close()
+                    cubicTo(size.width * 0.2f, horizonY - 120f, size.width * 0.4f, horizonY - 180f, size.width * 0.6f, horizonY - 90f)
+                    cubicTo(size.width * 0.8f, horizonY - 20f, size.width * 0.9f, horizonY - 140f, size.width, horizonY - 60f)
+                    lineTo(size.width, horizonY); close()
                 }
-                drawPath(mountainPath, Color(0xFF1A2530)) // Dark silhouette blue-grey
+                drawPath(backMountain, skyMid.copy(alpha = 0.6f)) // Bleeds into sky
 
-                // --- LAYER 4: THE LAKE ---
-                drawRect(Color(0xFF121A2F), topLeft = Offset(0f, horizonY), size = Size(size.width, lakeBottom - horizonY))
+                // Mid Layer: Mid contrast
+                val midMountain = Path().apply {
+                    moveTo(0f, horizonY)
+                    cubicTo(size.width * 0.15f, horizonY - 80f, size.width * 0.35f, horizonY - 140f, size.width * 0.5f, horizonY - 60f)
+                    cubicTo(size.width * 0.75f, horizonY - 10f, size.width * 0.85f, horizonY - 100f, size.width, horizonY - 30f)
+                    lineTo(size.width, horizonY); close()
+                }
+                drawPath(midMountain, Color(0xFF1A2530).copy(alpha = 0.8f))
 
-                // --- LAYER 5: WATER REFLECTIONS (Structured, not random) ---
+                // Front Layer: High contrast, dark silhouette
+                val frontMountain = Path().apply {
+                    moveTo(0f, horizonY)
+                    cubicTo(size.width * 0.25f, horizonY - 50f, size.width * 0.45f, horizonY - 90f, size.width * 0.65f, horizonY - 40f)
+                    cubicTo(size.width * 0.8f, horizonY - 10f, size.width * 0.95f, horizonY - 60f, size.width, horizonY)
+                    lineTo(size.width, horizonY); close()
+                }
+                drawPath(frontMountain, Color(0xFF0A1118))
+
+                // --- LAYER 3: THE HIGH HILL (Foreground) ---
+                val hillPath = Path().apply {
+                    moveTo(0f, size.height)
+                    lineTo(0f, size.height * 0.85f)
+                    cubicTo(size.width * 0.2f, size.height * 0.75f, size.width * 0.35f, size.height * 0.82f, size.width * 0.5f, size.height * 0.82f)
+                    cubicTo(size.width * 0.65f, size.height * 0.82f, size.width * 0.8f, size.height * 0.90f, size.width, size.height * 0.85f)
+                    lineTo(size.width, size.height); close()
+                }
+                drawPath(hillPath, Brush.verticalGradient(listOf(Color(0xFF2E4028), Color(0xFF0A120B))))
+
+                // --- LAYER 4: THE LAKE & REFLECTIONS ---
+                drawRect(Color(0xFF0B1320), topLeft = Offset(0f, horizonY), size = Size(size.width, lakeBottom - horizonY))
+
+                // Mountain Reflections (Flipped and darkened)
+                val reflectPath = Path().apply {
+                    moveTo(0f, horizonY)
+                    cubicTo(size.width * 0.25f, horizonY + 50f, size.width * 0.45f, horizonY + 90f, size.width * 0.65f, horizonY + 40f)
+                    cubicTo(size.width * 0.8f, horizonY + 10f, size.width * 0.95f, horizonY + 60f, size.width, horizonY)
+                    lineTo(size.width, horizonY); close()
+                }
+                drawPath(reflectPath, Color(0xFF050814).copy(alpha = 0.7f))
+
+                // Celestial Reflection Pillar
                 val reflectWidth = 120f
                 drawRect(
                     brush = Brush.verticalGradient(
-                        colors = listOf(celestialColor.copy(alpha = 0.6f), celestialColor.copy(alpha = 0.1f), Color.Transparent),
+                        colors = listOf(lightColor.copy(alpha = 0.5f), lightColor.copy(alpha = 0.1f), Color.Transparent),
                         startY = horizonY, endY = lakeBottom
                     ),
                     topLeft = Offset(sunX - reflectWidth / 2, horizonY),
                     size = Size(reflectWidth, lakeBottom - horizonY)
                 )
 
-                // Rhythmic Ripples
-                for (i in 0 until 15) {
-                    val y = horizonY + (lakeBottom - horizonY) * (i / 15f)
-                    val waveOffset = sin(i * 1.2f) * 40f
-                    val rippleWidth = 80f + cos(i * 0.8f) * 30f
+                // Rhythmic Water Ripples
+                for (i in 0 until 25) {
+                    val y = horizonY + (lakeBottom - horizonY) * (i / 25f)
+                    val waveOffset = sin(time * 2 + i * 1.2f) * 20f
+                    val rippleWidth = 60f + cos(i * 0.8f) * 40f
                     drawLine(
-                        color = celestialColor.copy(alpha = 0.5f - i * 0.03f),
+                        color = lightColor.copy(alpha = 0.4f - i * 0.015f),
                         start = Offset(sunX - rippleWidth / 2 + waveOffset, y),
                         end = Offset(sunX + rippleWidth / 2 + waveOffset, y),
-                        strokeWidth = 3f,
+                        strokeWidth = 2f,
                         cap = StrokeCap.Round
                     )
                 }
 
-                // --- LAYER 6: THE HIGH HILL (Foreground) ---
-                val hillPath = Path().apply {
-                    moveTo(0f, size.height)
-                    lineTo(0f, size.height * 0.85f)
-                    cubicTo(size.width * 0.2f, size.height * 0.75f, size.width * 0.35f, size.height * 0.82f, size.width * 0.5f, size.height * 0.82f)
-                    cubicTo(size.width * 0.65f, size.height * 0.82f, size.width * 0.8f, size.height * 0.90f, size.width, size.height * 0.85f)
-                    lineTo(size.width, size.height)
-                    close()
-                }
-                drawPath(hillPath, Brush.verticalGradient(listOf(Color(0xFF2E4028), Color(0xFF111810))))
-
-                // --- LAYER 7: THE CAMPFIRE ---
-                val flameScale = (logsBurning.value / 5f).coerceAtLeast(0.1f) // Base embers always glow
-                
-                // The Chiaroscuro Glow
+                // --- LAYER 5: CHIAROSCURO (Fire Light Bleeding onto the world) ---
+                // This is the "moving portrait" magic. The fire casts a warm glow over the dark grass and stones.
                 drawCircle(
                     brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFFE64A19).copy(alpha = 0.8f), Color(0xFFE64A19).copy(alpha = 0.2f), Color.Transparent),
+                        colors = listOf(
+                            Color(0xFFFF8A65).copy(alpha = 0.6f * flameScale), // Warm firelight
+                            Color(0xFFE64A19).copy(alpha = 0.2f * flameScale),
+                            Color.Transparent
+                        ),
                         center = fireCenter,
-                        radius = 400f * flameScale
+                        radius = 500f * flameScale
                     )
                 )
 
-                // Hearth Stones
+                // --- LAYER 6: 3D CAMPFIRE & STONES ---
+                // 3D Stones (Base + Shadow + Highlight)
                 for (i in 0 until 10) {
                     val angle = i * (2 * PI / 10)
-                    val stoneX = fireCenter.x + 100f * cos(angle).toFloat()
-                    val stoneY = fireCenter.y + 30f * sin(angle).toFloat()
-                    drawCircle(color = Color(0xFF3E2723), radius = 12f, center = Offset(stoneX, stoneY))
+                    val stoneX = fireCenter.x + 120f * cos(angle).toFloat()
+                    val stoneY = fireCenter.y + 35f * sin(angle).toFloat()
+                    draw3DStone(Offset(stoneX, stoneY), 15f)
                 }
 
-                // The Flame (Layered Beziers)
+                // Base Logs in Fire (Charred)
+                draw3DLog(Offset(fireCenter.x - 60f, fireCenter.y), Offset(fireCenter.x + 60f, fireCenter.y - 10f), 18f, true)
+                draw3DLog(Offset(fireCenter.x - 50f, fireCenter.y - 20f), Offset(fireCenter.x + 50f, fireCenter.y - 5f), 16f, true)
+
+                // The Flame (Morphing Beziers)
                 if (logsBurning.value > 0) {
+                    val flicker = sin(time * 8) * 10f * flameScale
                     val flamePath = Path().apply {
                         moveTo(fireCenter.x, fireCenter.y)
                         cubicTo(
-                            fireCenter.x - 60f * flameScale, fireCenter.y - 40f * flameScale,
-                            fireCenter.x - 30f * flameScale, fireCenter.y - 180f * flameScale,
-                            fireCenter.x, fireCenter.y - 180f * flameScale
+                            fireCenter.x - 70f * flameScale, fireCenter.y - 50f * flameScale,
+                            fireCenter.x - 30f * flameScale + flicker, fireCenter.y - 200f * flameScale,
+                            fireCenter.x, fireCenter.y - 220f * flameScale
                         )
                         cubicTo(
-                            fireCenter.x + 30f * flameScale, fireCenter.y - 180f * flameScale,
-                            fireCenter.x + 60f * flameScale, fireCenter.y - 40f * flameScale,
+                            fireCenter.x + 30f * flameScale - flicker, fireCenter.y - 200f * flameScale,
+                            fireCenter.x + 70f * flameScale, fireCenter.y - 50f * flameScale,
                             fireCenter.x, fireCenter.y
                         )
                         close()
                     }
-                    drawPath(flamePath, color = Color(0xFFFF5722).copy(alpha = 0.8f)) // Outer Orange
-                    drawPath(flamePath, color = Color(0xFFFFEB3B), style = Stroke(width = 25f * flameScale)) // Mid Yellow
-                    drawPath(flamePath, color = Color.White, style = Stroke(width = 12f * flameScale)) // Core White
+                    // Outer Orange
+                    drawPath(flamePath, color = Color(0xFFFF5722).copy(alpha = 0.8f)) 
+                    // Mid Yellow
+                    drawPath(flamePath, color = Color(0xFFFFEB3B), style = Stroke(width = 30f * flameScale)) 
+                    // Core White
+                    drawPath(flamePath, color = Color.White, style = Stroke(width = 15f * flameScale)) 
                 }
 
-                // Base Logs in Fire
-                drawRoundRect(Color(0xFF1A110B), topLeft = Offset(fireCenter.x - 50f, fireCenter.y - 10f), size = Size(100f, 20f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f))
-                drawRoundRect(Color(0xFF2D1A11), topLeft = Offset(fireCenter.x - 40f, fireCenter.y - 25f), size = Size(80f, 20f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f))
-
-                // Wood Stack on the Hill
+                // --- LAYER 7: 3D WOOD STACK ---
                 woodStack.forEachIndexed { index, pos ->
                     if (index != draggingLogIndex) {
-                        drawRoundRect(
-                            color = Color(0xFF3E2723),
-                            topLeft = pos,
-                            size = Size(80f, 25f),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(12f, 12f)
-                        )
-                        // Wood grain highlight
-                        drawLine(Color(0xFF5D4037), start = Offset(pos.x + 10f, pos.y + 12f), end = Offset(pos.x + 70f, pos.y + 12f), strokeWidth = 2f)
+                        draw3DLog(pos, Offset(pos.x + 80f, pos.y - 10f), 25f, false)
                     }
                 }
                 if (draggingLogIndex != -1) {
-                    drawRoundRect(
-                        color = Color(0xFF3E2723),
-                        topLeft = woodStack[draggingLogIndex] + dragOffset,
-                        size = Size(80f, 25f),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(12f, 12f)
-                    )
+                    draw3DLog(woodStack[draggingLogIndex] + dragOffset, Offset(woodStack[draggingLogIndex].x + 80f + dragOffset.x, woodStack[draggingLogIndex].y - 10f + dragOffset.y), 25f, false)
                 }
+
+                // --- LAYER 8: THE CIRCADIAN WASH (Global Color Bleeding) ---
+                // A painterly glaze that shifts the entire canvas from Day to Night
+                val nightIntensity = (1f - (effectiveElevation + 90f) / 180f).coerceIn(0f, 0.75f)
+                drawRect(color = Color(0xFF050814).copy(alpha = nightIntensity))
+
             } catch (e: Exception) { }
         }
 
         // --- UI OVERLAYS ---
-        
         val blackboxTrace = remember { context.getSharedPreferences("blackbox", Context.MODE_PRIVATE).getString("last_crash", null) }
         var showBlackbox by remember { mutableStateOf(blackboxTrace != null) }
         if (showBlackbox && blackboxTrace != null) {
@@ -392,7 +431,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             }
         }
 
-        // Escape Hatch
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -403,7 +441,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             contentAlignment = Alignment.Center
         ) { Text("⚙", color = Color.White.copy(alpha = 0.8f), fontSize = 18.sp) }
 
-        // Preview Badge
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -412,8 +449,39 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) { Text("Preview Mode — your usual launcher is still in charge", color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp) }
 
-        // The Leather Satchel
         LeatherSatchel(context, isDrawerOpen, Modifier.align(Alignment.BottomEnd))
+    }
+}
+
+// --- 3D DRAWING EXTENSIONS ---
+
+fun DrawScope.draw3DStone(center: Offset, radius: Float) {
+    // Drop Shadow
+    drawOval(Color.Black.copy(alpha = 0.5f), topLeft = center + Offset(4f, 8f), size = Size(radius * 2, radius * 1.2f))
+    // Base Stone
+    drawCircle(Color(0xFF4A4A4A), center, radius)
+    // Specular Highlight (Top Left)
+    drawCircle(Color(0xFF888888).copy(alpha = 0.7f), center + Offset(-radius * 0.3f, -radius * 0.3f), radius * 0.5f)
+    // Core Shadow (Bottom Right)
+    drawCircle(Color(0xFF111111).copy(alpha = 0.8f), center + Offset(radius * 0.4f, radius * 0.4f), radius * 0.6f)
+}
+
+fun DrawScope.draw3DLog(start: Offset, end: Offset, thickness: Float, isCharred: Boolean) {
+    val baseColor = if (isCharred) Color(0xFF1A110B) else Color(0xFF3E2723)
+    val highlightColor = if (isCharred) Color(0xFFE64A19).copy(alpha = 0.6f) else Color(0xFF5D4037)
+    
+    // Drop Shadow
+    drawLine(Color.Black.copy(alpha = 0.5f), start + Offset(0f, 10f), end + Offset(0f, 10f), strokeWidth = thickness, cap = StrokeCap.Round)
+    // Bark Base
+    drawLine(baseColor, start, end, strokeWidth = thickness, cap = StrokeCap.Round)
+    // Bark Highlight (Top Edge)
+    drawLine(highlightColor, start + Offset(0f, -thickness / 4), end + Offset(0f, -thickness / 4), strokeWidth = thickness / 3, cap = StrokeCap.Round)
+    
+    // End Cap (if not charred)
+    if (!isCharred) {
+        val capCenter = end
+        drawOval(Color(0xFF8D6E63), topLeft = capCenter - Offset(thickness/2, thickness/2), size = Size(thickness, thickness))
+        drawOval(Color(0xFF4E342E), topLeft = capCenter - Offset(thickness/3, thickness/3), size = Size(thickness/1.5f, thickness/1.5f))
     }
 }
 
@@ -489,18 +557,6 @@ fun getInstalledApps(context: Context): List<AppInfo> {
             AppInfo(name = resolveInfo.loadLabel(pm).toString(), icon = bmp, packageName = resolveInfo.activityInfo.packageName)
         }.getOrNull()
     }.take(30)
-}
-
-fun getCircadianMatrix(elevation: Float): FloatArray {
-    val t = (elevation / 90f).coerceIn(-1f, 1f)
-    val nightMatrix = floatArrayOf(0.3f, 0.0f, 0.1f, 0f, 0f, 0.0f, 0.2f, 0.3f, 0f, 0f, 0.1f, 0.1f, 0.8f, 0f, 20f, 0f, 0f, 0f, 1f, 0f)
-    val duskMatrix = floatArrayOf(1.2f, 0.2f, 0.0f, 0f, 20f, 0.2f, 0.9f, 0.1f, 0f, 10f, 0.0f, 0.0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
-    val dayMatrix = floatArrayOf(1.0f, 0.0f, 0.0f, 0f, 0f, 0.0f, 1.1f, 0.1f, 0f, 10f, 0.0f, 0.1f, 1.1f, 0f, 10f, 0f, 0f, 0f, 1f, 0f)
-    return if (t < 0) interpolateMatrix(nightMatrix, duskMatrix, t + 1f) else interpolateMatrix(duskMatrix, dayMatrix, t)
-}
-
-fun interpolateMatrix(m1: FloatArray, m2: FloatArray, t: Float): FloatArray {
-    return FloatArray(20) { m1[it] * (1 - t) + m2[it] * t }
 }
 
 class CozyAudioEngine {
