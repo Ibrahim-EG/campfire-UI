@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="60dp" android:height="40dp"
+    android:viewportWidth="60" android:viewportHeight="40">
+    <!-- Base stone shape -->
+    <path android:fillColor="#FF333333" android:pathData="M10,25 Q5,15 15,10 T40,5 Q55,8 55,20 T45,35 Q25,40 10,25 Z"/>
+    <!-- Highlight facet (impasto effect) -->
+    <path android:fillColor="#FF555555" android:pathData="M15,15 Q20,10 30,12 T45,15 Q40,20 30,18 Z"/>
+</vector>
