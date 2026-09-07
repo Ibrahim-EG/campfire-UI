@@ -10,18 +10,18 @@ import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
-import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -44,11 +44,14 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,20 +62,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -80,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.launch
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
@@ -170,7 +170,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
 
         // Fire & Wood State
         val logsBurning = viewModel.logsBurning
-        val burnProgress = remember { List(5) { androidx.compose.animation.core.Animatable(0f) } }
+        val burnProgress = remember { List(5) { Animatable(0f) } }
         val fireCenter = Offset(size.width * 0.5f, size.height * 0.88f)
         
         // Wood Stack: 3 small pine logs in the bottom-left
@@ -357,6 +357,27 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             }
         }
 
+        // --- THE ESCAPE HATCH ---
+        // A subtle, frosted gear icon in the top-left. If the app crashes or you feel trapped,
+        // tap this to open Android's Home Settings and safely revert to your previous launcher.
+        IconButton(
+            onClick = {
+                val intent = Intent(Settings.ACTION_HOME_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(24.dp)
+                .size(32.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = "Escape Hatch - Change Launcher",
+                tint = Color.White.copy(alpha = 0.6f) // Soft white to blend with the dusk sky
+            )
+        }
+
         // Interaction Layer: Drag and Drop
         Modifier.pointerInput(Unit) {
             detectDragGesturesAfterLongPress(
@@ -409,7 +430,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
 fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>) {
     val height by animateFloatAsState(
         targetValue = if (isExpanded.value) 600f else 80f,
-        animationSpec = tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing), // Heavy leather flap easing
+        animationSpec = tween(600, easing = FastOutSlowInEasing), // Heavy leather flap easing
         label = "SatchelHeight"
     )
     
