@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Burnt Sienna glow #FFB74D at 35%: the chiaroscuro halo breathing behind the flame -->
+    <path android:fillColor="#FFB74D" android:fillAlpha="0.35"
+        android:pathData="M28,58 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0"/>
+    <!-- Sap-Green #1B5E20 pines: two silent guardians flanking the hearth -->
+    <path android:fillColor="#1B5E20" android:pathData="M24,76 L30,58 L36,76 Z"/>
+    <path android:fillColor="#1B5E20" android:pathData="M72,76 L78,58 L84,76 Z"/>
+    <!-- Raw Umber #5D4037 log: crossed fuel, round-capped for impasto weight -->
+    <path android:fillColor="#00000000" android:strokeColor="#5D4037" android:strokeWidth="8"
+        android:strokeLineCap="round" android:pathData="M38,74 L70,66"/>
+    <!-- Deep Umber #4E342E second log: the shadowed twin beneath the first -->
+    <path android:fillColor="#00000000" android:strokeColor="#4E342E" android:strokeWidth="8"
+        android:strokeLineCap="round" android:pathData="M38,66 L70,74"/>
+    <!-- Burnt Orange #EF6C00 outer flame: the reaching, hungry tip -->
+    <path android:fillColor="#EF6C00"
+        android:pathData="M54,30 C60,40 68,46 68,58 C68,68 61,74 54,74 C47,74 40,68 40,58 C40,46 48,40 54,30 Z"/>
+    <!-- Gamboge Yellow #FFC107 mid flame: the dancing body of the fire -->
+    <path android:fillColor="#FFC107"
+        android:pathData="M54,40 C58,47 63,51 63,59 C63,66 58,70 54,70 C50,70 45,66 45,59 C45,51 50,47 54,40 Z"/>
+    <!-- Warm White #FFF8E1 core: the hottest, quietest heart of the hearth -->
+    <path android:fillColor="#FFF8E1"
+        android:pathData="M54,50 C56,54 59,56 59,61 C59,65 56,67 54,67 C52,67 49,65 49,61 C49,56 52,54 54,50 Z"/>
+</vector>
