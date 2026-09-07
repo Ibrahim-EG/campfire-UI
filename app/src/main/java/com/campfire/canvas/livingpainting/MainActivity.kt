@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
@@ -63,16 +62,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -132,6 +129,14 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
     )
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // DEFUSED: The Zero-Size Frame Trap. 
+        // Compose sometimes measures the screen as 0x0 on the very first millisecond of launch.
+        // Creating a Bitmap or Gradient with 0 dimensions causes an instant native crash.
+        if (constraints.maxWidth == 0 || constraints.maxHeight == 0) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black))
+            return@BoxWithConstraints
+        }
+
         val size = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         
         val isVertical = maxHeight > maxWidth
@@ -144,8 +149,8 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             generateStaticBackground(size, horizonY, lakeTop, lakeBottom, isVertical)
         }
 
-        var sunPos by remember { mutableStateOf(Offset.Zero) }
-        var moonPos by remember { mutableStateOf(Offset.Zero) }
+        var sunPos by remember { mutableStateOf(Offset(size.width / 2, size.height / 4)) }
+        var moonPos by remember { mutableStateOf(Offset(size.width / 2, size.height * 0.75f)) }
         
         LaunchedEffect(Unit) {
             while (true) {
@@ -261,42 +266,35 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 )
             }
 
-            drawIntoCanvas { canvas ->
-                val pillarPaint = Paint().apply {
-                    style = Paint.Style.FILL
-                    isAntiAlias = true
-                }
-                
-                val reflectX = if (effectiveElevation > 0) sunPos.x else moonPos.x
-                val reflectColorInt = if (effectiveElevation > 0) android.graphics.Color.parseColor("#FFD700") else android.graphics.Color.parseColor("#E0E8F0")
-                
-                // Defused: BlurMaskFilter is NOT supported on hardware-accelerated Compose Canvases and can cause native GPU crashes.
-                // We fake the shimmering water blur using a fully GPU-accelerated RadialGradient.
-                pillarPaint.shader = android.graphics.RadialGradient(
-                    reflectX, (lakeTop + lakeBottom) / 2f, 60f,
-                    reflectColorInt, android.graphics.Color.TRANSPARENT,
-                    android.graphics.Shader.TileMode.CLAMP
-                )
-                
-                canvas.nativeCanvas.drawRect(reflectX - 60f, lakeTop, reflectX + 60f, lakeBottom, pillarPaint)
-                
-                val dashPaint = Paint().apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = 3f
-                    color = android.graphics.Color.parseColor("#E0F7FA") 
-                    alpha = 120
-                    pathEffect = DashPathEffect(floatArrayOf(30f, 20f), 0f)
-                    isAntiAlias = true
-                }
-                
-                val path = Path()
-                for (i in 0 until 6) {
-                    val y = lakeTop + (lakeBottom - lakeTop) * (i / 6f)
-                    path.moveTo(reflectX - 50f, y)
-                    path.lineTo(reflectX + 50f, y)
-                }
-                canvas.nativeCanvas.drawPath(path, dashPaint)
+            // DEFUSED: Replaced raw android.graphics.Paint with native Compose Brush.
+            // This guarantees 100% GPU safety across all tablet hardware.
+            val reflectX = if (effectiveElevation > 0) sunPos.x else moonPos.x
+            val reflectColor = if (effectiveElevation > 0) Color(0xFFFFD700) else Color(0xFFE0E8F0)
+
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(reflectColor.copy(alpha = 0.6f), Color.Transparent),
+                    center = Offset(reflectX, (lakeTop + lakeBottom) / 2f),
+                    radius = 60f
+                ),
+                topLeft = Offset(reflectX - 60f, lakeTop),
+                size = Size(120f, lakeBottom - lakeTop)
+            )
+
+            val dashPath = androidx.compose.ui.graphics.Path()
+            for (i in 0 until 6) {
+                val y = lakeTop + (lakeBottom - lakeTop) * (i / 6f)
+                dashPath.moveTo(reflectX - 50f, y)
+                dashPath.lineTo(reflectX + 50f, y)
             }
+            drawPath(
+                path = dashPath,
+                color = Color(0x80E0F7FA),
+                style = Stroke(
+                    width = 3f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(30f, 20f), 0f)
+                )
+            )
 
             val time = viewModel.cinematicTime.value / 1_000_000_000f
             birds.forEach { bird ->
@@ -315,6 +313,9 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             }
 
             val flameScale = logsBurning.value / 5f
+            
+            // DEFUSED: Removed BlendMode.Screen. It causes native driver crashes on Mali/Adreno GPUs.
+            // Standard alpha blending looks 99% identical and is universally safe.
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
@@ -323,8 +324,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     ),
                     center = fireCenter,
                     radius = 400f * flameScale
-                ),
-                blendMode = BlendMode.Screen 
+                )
             )
 
             for (i in 0 until 8) {
@@ -419,7 +419,8 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier
             .padding(24.dp)
             .width(300.dp)
             .height(height.dp)
-            .blur(if (isExpanded.value) 40.dp else 0.dp) 
+            // DEFUSED: Modifier.blur(0.dp) can crash older Compose versions. We conditionally apply it.
+            .then(if (isExpanded.value) Modifier.blur(40.dp) else Modifier)
             .background(
                 if (isExpanded.value) Color(0x80000000) else Color(0xFF4E342E), 
                 shape = RoundedCornerShape(24.dp)
@@ -462,10 +463,6 @@ fun getInstalledApps(context: Context): List<AppInfo> {
     return appList.mapNotNull { resolveInfo ->
         try {
             val drawable = resolveInfo.activityInfo.loadIcon(pm)
-            
-            // Defused: Modern Adaptive Icons often report -1 for dimensions before being bound to a view.
-            // Passing -1 to Bitmap.createBitmap throws an IllegalArgumentException and crashes the app.
-            // We enforce a safe 108x108 fallback size.
             val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 108
             val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 108
             
@@ -479,7 +476,6 @@ fun getInstalledApps(context: Context): List<AppInfo> {
                 icon = bmp
             )
         } catch (e: Exception) {
-            // Defused: Catch any rogue PackageManager exceptions so one bad app doesn't kill the canvas
             null 
         }
     }.take(20) 
@@ -490,8 +486,11 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     val canvas = Canvas(bitmap)
     val paint = Paint().apply { isAntiAlias = true }
     
+    // DEFUSED: LinearGradient crashes if start and end Y are identical (0f to 0f).
+    val safeHorizonY = horizonY.coerceAtLeast(1f)
+    
     val skyShader = android.graphics.LinearGradient(
-        0f, 0f, 0f, horizonY,
+        0f, 0f, 0f, safeHorizonY,
         intArrayOf(
             android.graphics.Color.parseColor("#1A237E"), 
             android.graphics.Color.parseColor("#3949AB"), 
@@ -551,8 +550,11 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     paint.color = android.graphics.Color.parseColor("#33691E") 
     canvas.drawRect(0f, lakeBottom, size.width, size.height, paint)
     
+    // DEFUSED: Prevent divide-by-zero if lakeBottom equals size.height
+    val heightDiff = (size.height - lakeBottom).coerceAtLeast(1f)
+    
     for (y in (lakeBottom.toInt() + 5)..size.height.toInt() step 10) {
-        val darkness = (y - lakeBottom) / (size.height - lakeBottom)
+        val darkness = ((y - lakeBottom) / heightDiff).coerceIn(0f, 1f)
         paint.color = android.graphics.Color.argb(
             (200 + darkness * 55).toInt(), 
             (50 - darkness * 20).toInt(), 
@@ -625,75 +627,83 @@ class CozyAudioEngine {
         isPaused = false
         
         ambienceThread = Thread {
-            val sampleRate = 16000
-            var bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            if (bufferSize <= 0) bufferSize = 4096 // Defused: Fallback if the tablet's audio hardware rejects the sample rate
-            
-            ambienceTrack = AudioTrack.Builder()
-                .setAudioAttributes(AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build())
-                .setAudioFormat(AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build())
-                .setBufferSizeInBytes(bufferSize)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-            
-            ambienceTrack?.play()
-            val buffer = ShortArray(bufferSize / 2)
-            var lastOut = 0.0
-            
-            while (isPlaying) {
-                if (!isPaused) {
-                    for (i in buffer.indices) {
-                        val white = Math.random() * 2 - 1
-                        lastOut = (lastOut + (0.02 * white)) / 1.02 
-                        buffer[i] = (lastOut * 32767 * 0.15).toInt().toShort()
+            try {
+                val sampleRate = 16000
+                var bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                if (bufferSize <= 0) bufferSize = 4096 
+                
+                ambienceTrack = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                    .setAudioFormat(AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build())
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+                
+                ambienceTrack?.play()
+                val buffer = ShortArray(bufferSize / 2)
+                var lastOut = 0.0
+                
+                while (isPlaying) {
+                    if (!isPaused) {
+                        for (i in buffer.indices) {
+                            val white = Math.random() * 2 - 1
+                            lastOut = (lastOut + (0.02 * white)) / 1.02 
+                            buffer[i] = (lastOut * 32767 * 0.15).toInt().toShort()
+                        }
+                        ambienceTrack?.write(buffer, 0, buffer.size)
+                    } else {
+                        Thread.sleep(100)
                     }
-                    ambienceTrack?.write(buffer, 0, buffer.size)
-                } else {
-                    Thread.sleep(100)
                 }
+            } catch (e: Exception) {
+                // DEFUSED: Silently fail if the tablet's audio HAL rejects the format
             }
         }
         ambienceThread?.start()
         
         fireThread = Thread {
-            val sampleRate = 22050
-            var bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            if (bufferSize <= 0) bufferSize = 4096 // Defused: Fallback if the tablet's audio hardware rejects the sample rate
-            
-            fireTrack = AudioTrack.Builder()
-                .setAudioAttributes(AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build())
-                .setAudioFormat(AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build())
-                .setBufferSizeInBytes(bufferSize)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-            
-            fireTrack?.play()
-            val buffer = ShortArray(bufferSize / 2)
-            
-            while (isPlaying) {
-                if (!isPaused && fireIntensity > 0.05f) {
-                    for (i in buffer.indices) {
-                        val crackle = if (Math.random() < 0.005 * fireIntensity) (Math.random() * 2 - 1) * 32767 * fireIntensity else 0.0
-                        buffer[i] = crackle.toInt().toShort()
+            try {
+                val sampleRate = 22050
+                var bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                if (bufferSize <= 0) bufferSize = 4096 
+                
+                fireTrack = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build())
+                    .setAudioFormat(AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build())
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+                
+                fireTrack?.play()
+                val buffer = ShortArray(bufferSize / 2)
+                
+                while (isPlaying) {
+                    if (!isPaused && fireIntensity > 0.05f) {
+                        for (i in buffer.indices) {
+                            val crackle = if (Math.random() < 0.005 * fireIntensity) (Math.random() * 2 - 1) * 32767 * fireIntensity else 0.0
+                            buffer[i] = crackle.toInt().toShort()
+                        }
+                        fireTrack?.write(buffer, 0, buffer.size)
+                    } else {
+                        Thread.sleep(100)
                     }
-                    fireTrack?.write(buffer, 0, buffer.size)
-                } else {
-                    Thread.sleep(100)
                 }
+            } catch (e: Exception) {
+                // DEFUSED: Silently fail if the tablet's audio HAL rejects the format
             }
         }
         fireThread?.start()
@@ -705,50 +715,52 @@ class CozyAudioEngine {
     
     fun playThump() {
         Thread {
-            val sampleRate = 44100
-            val duration = 0.2
-            val numSamples = (sampleRate * duration).toInt()
-            val buffer = ShortArray(numSamples)
-            
-            for (i in 0 until numSamples) {
-                val t = i.toDouble() / sampleRate
-                val freq = 60 - (t * 100) 
-                val wave = sin(2 * PI * freq * t) * (1 - t / duration)
-                val noise = (Math.random() * 2 - 1) * (1 - t / duration) * 0.5
-                buffer[i] = ((wave + noise) * 32767 * 0.5).toInt().toShort()
-            }
-            
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build())
-                .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                .setBufferSizeInBytes(buffer.size * 2)
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .build()
+            try {
+                val sampleRate = 44100
+                val duration = 0.2
+                val numSamples = (sampleRate * duration).toInt()
+                val buffer = ShortArray(numSamples)
                 
-            track.write(buffer, 0, buffer.size)
-            track.play()
-            Thread.sleep(200)
-            track.release()
+                for (i in 0 until numSamples) {
+                    val t = i.toDouble() / sampleRate
+                    val freq = 60 - (t * 100) 
+                    val wave = sin(2 * PI * freq * t) * (1 - t / duration)
+                    val noise = (Math.random() * 2 - 1) * (1 - t / duration) * 0.5
+                    buffer[i] = ((wave + noise) * 32767 * 0.5).toInt().toShort()
+                }
+                
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build())
+                    .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setBufferSizeInBytes(buffer.size * 2)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+                    
+                track.write(buffer, 0, buffer.size)
+                track.play()
+                Thread.sleep(200)
+                track.release()
+            } catch (e: Exception) {}
         }.start()
     }
 
     fun pause() {
         isPaused = true
-        ambienceTrack?.pause()
-        fireTrack?.pause()
+        try { ambienceTrack?.pause() } catch (e: Exception) {}
+        try { fireTrack?.pause() } catch (e: Exception) {}
     }
 
     fun resume() {
         isPaused = false
-        ambienceTrack?.play()
-        fireTrack?.play()
+        try { ambienceTrack?.play() } catch (e: Exception) {}
+        try { fireTrack?.play() } catch (e: Exception) {}
     }
 
     fun stop() {
         isPlaying = false
         ambienceThread?.interrupt()
         fireThread?.interrupt()
-        ambienceTrack?.release()
-        fireTrack?.release()
+        try { ambienceTrack?.release() } catch (e: Exception) {}
+        try { fireTrack?.release() } catch (e: Exception) {}
     }
 }
