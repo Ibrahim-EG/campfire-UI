@@ -1,5 +1,6 @@
 package com.campfire.canvas.livingpainting
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -11,6 +12,8 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -87,7 +90,7 @@ class MainActivity : ComponentActivity() {
     private val audioEngine = CozyAudioEngine()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installCrashBlackBox() // The flight recorder boots before anything else
+        installCrashBlackBox() 
         super.onCreate(savedInstanceState)
         setContent {
             DisposableEffect(Unit) {
@@ -98,14 +101,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // THE BLACK BOX: records any fatal crash so the painting can confess its wounds on next launch
+    // THE BLACK BOX V2: Writes the crash log to the public Documents folder so you can read it via "My Files"
     private fun installCrashBlackBox() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             runCatching {
+                val trace = "Thread: ${thread.name}\n" + Log.getStackTraceString(error)
+                
+                // 1. Internal vault (for the UI card if the app partially boots)
                 getSharedPreferences("blackbox", MODE_PRIVATE).edit()
-                    .putString("last_crash", "Thread: ${thread.name}\n" + Log.getStackTraceString(error))
+                    .putString("last_crash", trace)
                     .apply()
+
+                // 2. External file (Accessible via Samsung "My Files" -> Documents -> CampfireCanvas)
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, "campfire_crash_${System.currentTimeMillis()}.txt")
+                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/CampfireCanvas")
+                }
+                val uri = contentResolver.insert(MediaStore.Files.getContentUri("external"), contentValues)
+                uri?.let {
+                    contentResolver.openOutputStream(it)?.use { out ->
+                        out.write(trace.toByteArray())
+                    }
+                }
             }
             previous?.uncaughtException(thread, error)
         }
@@ -114,7 +133,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         audioEngine.pause()
-        viewModel.isPaused.value = true // Battery Sanctity: total freeze when hidden
+        viewModel.isPaused.value = true 
     }
 
     override fun onResume() {
@@ -134,7 +153,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         targetValue = targetElevation,
         animationSpec = tween(
             durationMillis = 90_000,
-            easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f) // Cubic easing for the 90-second sunset bleed
+            easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f) 
         ),
         label = "CircadianElevation"
     )
@@ -152,8 +171,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         val lakeTop = horizonY
         val lakeBottom = grassTop
 
-        // DEFUSED: The impasto background is now painted on a worker thread.
-        // The fragile first composition frame now does almost nothing.
         var staticBackground by remember { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(size, isVertical) {
             staticBackground = withContext(Dispatchers.Default) {
@@ -167,9 +184,12 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         LaunchedEffect(Unit) {
             while (true) {
                 val t = (effectiveElevation / 90f).coerceIn(-1f, 1f)
-                sunPos = Offset(size.width * (0.5f + 0.4f * sin(t * PI)), size.height * (0.5f - 0.4f * t))
-                moonPos = Offset(size.width * (0.5f - 0.4f * sin(t * PI)), size.height * (0.5f + 0.4f * t))
-                kotlinx.coroutines.delay(60_000) // Celestial coordinates refresh only once per minute
+                // DEFUSED: Kotlin strictly forbids mixing Float and Double. 
+                // We explicitly cast t to Double for the PI math, then back to Float for the Offset.
+                val sinVal = sin(t.toDouble() * PI).toFloat()
+                sunPos = Offset(size.width * (0.5f + 0.4f * sinVal), size.height * (0.5f - 0.4f * t))
+                moonPos = Offset(size.width * (0.5f - 0.4f * sinVal), size.height * (0.5f + 0.4f * t))
+                kotlinx.coroutines.delay(60_000) 
             }
         }
 
@@ -225,7 +245,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                                     audioEngine.playThump()
                                     val logSlot = logsBurning.value - 1
                                     scope.launch {
-                                        burnProgress[logSlot].animateTo(1f, tween(150_000, easing = LinearEasing)) // 150s linear consumption into ash
+                                        burnProgress[logSlot].animateTo(1f, tween(150_000, easing = LinearEasing)) 
                                         logsBurning.value--
                                         burnProgress[logSlot].snapTo(0f)
                                     }
@@ -246,10 +266,9 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                         colorFilter = ColorFilter.colorMatrix(ColorMatrix(getCircadianMatrix(effectiveElevation)))
                     )
                 } else {
-                    // Underpainting: a simple dusk wash holds the frame while the worker paints the impasto
                     drawRect(
                         brush = Brush.verticalGradient(
-                            listOf(Color(0xFF283593), Color(0xFF5C6BC0), Color(0xFF33691E)) // Ultramarine to Sap-Green placeholder wash
+                            listOf(Color(0xFF283593), Color(0xFF5C6BC0), Color(0xFF33691E)) 
                         )
                     )
                 }
@@ -292,7 +311,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 }
                 drawPath(
                     path = dashPath,
-                    color = Color(0x80E0F7FA), // Low-opacity cyan shimmer ripples
+                    color = Color(0x80E0F7FA), 
                     style = Stroke(width = 3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(30f, 20f), 0f))
                 )
 
@@ -305,14 +324,14 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                         moveTo(x + 20 * bird.scale, bird.y)
                         quadraticBezierTo(x + 30 * bird.scale, bird.y - 10 * bird.scale, x + 40 * bird.scale, bird.y)
                     }
-                    drawPath(path = path, color = Color.Black, style = Stroke(width = 2f * bird.scale, cap = StrokeCap.Round)) // Sumi-e ink strokes
+                    drawPath(path = path, color = Color.Black, style = Stroke(width = 2f * bird.scale, cap = StrokeCap.Round)) 
                 }
 
                 val flameScale = logsBurning.value / 5f
                 if (flameScale > 0f) {
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(Color(0x80E64A19), Color(0x00E64A19)), // Burnt Sienna chiaroscuro bleed
+                            colors = listOf(Color(0x80E64A19), Color(0x00E64A19)), 
                             center = fireCenter,
                             radius = (400f * flameScale).coerceAtLeast(1f)
                         )
@@ -331,15 +350,15 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                         )
                         close()
                     }
-                    drawPath(flamePath, color = Color(0x80FF5722)) // Orange transparent tips
-                    drawPath(flamePath, color = Color(0xFFFFEB3B), style = Stroke(width = (20f * flameScale).coerceAtLeast(1f))) // Yellow mid
-                    drawPath(flamePath, color = Color.White, style = Stroke(width = (10f * flameScale).coerceAtLeast(1f))) // White core
+                    drawPath(flamePath, color = Color(0x80FF5722)) 
+                    drawPath(flamePath, color = Color(0xFFFFEB3B), style = Stroke(width = (20f * flameScale).coerceAtLeast(1f))) 
+                    drawPath(flamePath, color = Color.White, style = Stroke(width = (10f * flameScale).coerceAtLeast(1f))) 
                 }
 
                 for (i in 0 until 8) {
                     val angle = i * (2 * PI / 8)
                     drawCircle(
-                        color = Color(0xFF5D4037), // Earthy Umber hearth stones
+                        color = Color(0xFF5D4037), 
                         radius = 15f,
                         center = Offset(fireCenter.x + 80f * cos(angle).toFloat(), fireCenter.y + 40f * sin(angle).toFloat())
                     )
@@ -348,7 +367,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 woodStack.forEachIndexed { index, pos ->
                     if (index != draggingLogIndex) {
                         drawRoundRect(
-                            color = Color(0xFF3E2723), // Deep pine bark
+                            color = Color(0xFF3E2723), 
                             topLeft = pos,
                             size = Size(60f, 20f),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
@@ -363,12 +382,9 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
                     )
                 }
-            } catch (e: Exception) {
-                // The painting skips a frame rather than dying.
-            }
+            } catch (e: Exception) { }
         }
 
-        // THE BLACK BOX READER: if the app died before, it confesses here on screen
         val blackboxTrace = remember { context.getSharedPreferences("blackbox", Context.MODE_PRIVATE).getString("last_crash", null) }
         var showBlackbox by remember { mutableStateOf(blackboxTrace != null) }
         if (showBlackbox && blackboxTrace != null) {
@@ -403,7 +419,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             }
         }
 
-        // ESCAPE HATCH: drawn glyph, no icon library needed
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -420,7 +435,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             Text("⚙", color = Color.White.copy(alpha = 0.7f), fontSize = 18.sp)
         }
 
-        // PREVIEW MODE BADGE: reassures you that your real launcher is still in charge
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -443,7 +457,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
 fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier: Modifier = Modifier) {
     val height by animateFloatAsState(
         targetValue = if (isExpanded.value) 600f else 80f,
-        animationSpec = tween(600, easing = FastOutSlowInEasing), // Heavy leather flap easing
+        animationSpec = tween(600, easing = FastOutSlowInEasing), 
         label = "SatchelHeight"
     )
 
@@ -461,15 +475,15 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier
             .padding(24.dp)
             .width(300.dp)
             .height(height.dp)
-            .then(if (isExpanded.value) Modifier.blur(40.dp) else Modifier) // Heavy frost only when open
+            .then(if (isExpanded.value) Modifier.blur(40.dp) else Modifier) 
             .background(
-                if (isExpanded.value) Color(0x80000000) else Color(0xFF4E342E), // Raw Umber impasto leather
+                if (isExpanded.value) Color(0x80000000) else Color(0xFF4E342E), 
                 shape = RoundedCornerShape(24.dp)
             )
             .clickable { isExpanded.value = !isExpanded.value }
     ) {
         if (!isExpanded.value) {
-            Box(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).size(20.dp).background(Color.White, CircleShape)) // Single white highlight
+            Box(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).size(20.dp).background(Color.White, CircleShape)) 
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
@@ -490,7 +504,7 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier
                             bitmap = app.icon.asImageBitmap(),
                             contentDescription = app.name,
                             modifier = Modifier.size(48.dp),
-                            colorFilter = ColorFilter.tint(Color.White) // Clean white glyph against the chaotic painting
+                            colorFilter = ColorFilter.tint(Color.White) 
                         )
                         Text(text = app.name, color = Color.White, fontSize = 10.sp, maxLines = 1)
                     }
@@ -533,9 +547,9 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     val skyShader = android.graphics.LinearGradient(
         0f, 0f, 0f, safeHorizonY,
         intArrayOf(
-            android.graphics.Color.parseColor("#1A237E"), // Prussian Blue zenith
-            android.graphics.Color.parseColor("#3949AB"), // Ultramarine mid-sky
-            android.graphics.Color.parseColor("#8C9EFF")  // Periwinkle horizon kiss
+            android.graphics.Color.parseColor("#1A237E"), 
+            android.graphics.Color.parseColor("#3949AB"), 
+            android.graphics.Color.parseColor("#8C9EFF")  
         ),
         floatArrayOf(0f, 0.6f, 1f),
         Shader.TileMode.CLAMP
@@ -556,20 +570,20 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
 
     paint.shader = null
     paint.style = Paint.Style.FILL
-    paint.color = android.graphics.Color.parseColor("#263238") // Blue-grey misty treeline
+    paint.color = android.graphics.Color.parseColor("#263238") 
     canvas.saveLayer(null, null)
     paint.maskFilter = android.graphics.BlurMaskFilter(15f, android.graphics.BlurMaskFilter.Blur.NORMAL)
     canvas.drawPath(pinePath, paint)
     canvas.restore()
 
     paint.maskFilter = null
-    paint.color = android.graphics.Color.parseColor("#0277BD") // Deep cerulean lake body
+    paint.color = android.graphics.Color.parseColor("#0277BD") 
     canvas.drawRect(0f, lakeTop, size.width, lakeBottom, paint)
 
     val colors = intArrayOf(
-        android.graphics.Color.parseColor("#00838F"), // Teal broken color
-        android.graphics.Color.parseColor("#FFF59D"), // Pale Yellow broken color
-        android.graphics.Color.parseColor("#F48FB1")  // Soft Pink broken color
+        android.graphics.Color.parseColor("#00838F"), 
+        android.graphics.Color.parseColor("#FFF59D"), 
+        android.graphics.Color.parseColor("#F48FB1")  
     )
     paint.style = Paint.Style.STROKE
     paint.strokeWidth = 8f
@@ -585,7 +599,7 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     }
 
     paint.style = Paint.Style.FILL
-    paint.color = android.graphics.Color.parseColor("#33691E") // Sap-Green forest floor
+    paint.color = android.graphics.Color.parseColor("#33691E") 
     canvas.drawRect(0f, lakeBottom, size.width, size.height, paint)
 
     val heightDiff = (size.height - lakeBottom).coerceAtLeast(1f)
@@ -613,19 +627,19 @@ fun getCircadianMatrix(elevation: Float): FloatArray {
     val nightMatrix = floatArrayOf(
         0.4f, 0.0f, 0.1f, 0f, 0f,
         0.0f, 0.3f, 0.2f, 0f, 0f,
-        0.1f, 0.1f, 0.8f, 0f, 40f, // Prussian + Ultramarine night bleed
+        0.1f, 0.1f, 0.8f, 0f, 40f, 
         0f, 0f, 0f, 1f, 0f
     )
     val duskMatrix = floatArrayOf(
-        1.2f, 0.2f, 0.0f, 0f, 20f, // Madder Lake Red warmth
-        0.2f, 0.9f, 0.1f, 0f, 10f, // Gamboge Yellow ember light
+        1.2f, 0.2f, 0.0f, 0f, 20f, 
+        0.2f, 0.9f, 0.1f, 0f, 10f, 
         0.0f, 0.0f, 0.5f, 0f, 0f,
         0f, 0f, 0f, 1f, 0f
     )
     val dayMatrix = floatArrayOf(
         1.0f, 0.0f, 0.0f, 0f, 0f,
-        0.0f, 1.1f, 0.1f, 0f, 10f, // Boosted Yellow-Green foliage
-        0.0f, 0.1f, 1.1f, 0f, 10f, // Vibrant Cyan crispness
+        0.0f, 1.1f, 0.1f, 0f, 10f, 
+        0.0f, 0.1f, 1.1f, 0f, 10f, 
         0f, 0f, 0f, 1f, 0f
     )
     return if (t < 0) interpolateMatrix(nightMatrix, duskMatrix, t + 1f)
@@ -668,7 +682,7 @@ class CozyAudioEngine {
                     if (!isPaused) {
                         for (i in buffer.indices) {
                             val white = Math.random() * 2 - 1
-                            lastOut = (lastOut + (0.02 * white)) / 1.02 // Brownian wind integration
+                            lastOut = (lastOut + (0.02 * white)) / 1.02 
                             buffer[i] = (lastOut * 32767 * 0.15).toInt().toShort()
                         }
                         ambienceTrack?.write(buffer, 0, buffer.size)
@@ -694,7 +708,8 @@ class CozyAudioEngine {
                 while (isPlaying) {
                     if (!isPaused && fireIntensity > 0.05f) {
                         for (i in buffer.indices) {
-                            val crackle = if (Math.random() < 0.005 * fireIntensity) (Math.random() * 2 - 1) * 32767 * fireIntensity else 0.0
+                            // DEFUSED: Explicitly cast fireIntensity to Double to prevent Float/Double mismatch
+                            val crackle = if (Math.random() < 0.005 * fireIntensity.toDouble()) (Math.random() * 2 - 1) * 32767.0 * fireIntensity.toDouble() else 0.0
                             buffer[i] = crackle.toInt().toShort()
                         }
                         fireTrack?.write(buffer, 0, buffer.size)
@@ -715,7 +730,7 @@ class CozyAudioEngine {
                 val buffer = ShortArray(numSamples)
                 for (i in 0 until numSamples) {
                     val t = i.toDouble() / sampleRate
-                    val freq = 60 - (t * 100) // Low-end thump pitch sweep
+                    val freq = 60 - (t * 100) 
                     val wave = sin(2 * PI * freq * t) * (1 - t / 0.2)
                     val noise = (Math.random() * 2 - 1) * (1 - t / 0.2) * 0.5
                     buffer[i] = ((wave + noise) * 32767 * 0.5).toInt().toShort()
