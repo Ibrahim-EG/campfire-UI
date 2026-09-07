@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp" android:height="30dp"
+    android:viewportWidth="100" android:viewportHeight="30">
+    <!-- Log body -->
+    <path android:fillColor="#FF2D1A11" android:pathData="M5,15 A5,10 0 1,1 5,15.1 L95,15 A5,10 0 1,1 95,15.1 Z"/>
+    <!-- End cap -->
+    <path android:fillColor="#FF5D4037" android:pathData="M90,5 A5,10 0 1,0 90,25 A5,10 0 1,0 90,5 Z"/>
+    <!-- Bark grain -->
+    <path android:strokeColor="#FF1A110B" android:strokeWidth="1" android:pathData="M10,10 L80,12 M15,20 L85,18 M20,15 L75,15"/>
+</vector>
