@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +68,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -89,7 +91,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Request location for true solar elevation (gracefully degrades to simulated cycle if denied)
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), 100)
         }
@@ -97,9 +98,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             DisposableEffect(Unit) {
                 audioEngine.start()
-                onDispose {
-                    audioEngine.stop()
-                }
+                onDispose { audioEngine.stop() }
             }
             CampfireCanvasApp(viewModel, audioEngine)
         }
@@ -108,7 +107,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         audioEngine.pause()
-        viewModel.isPaused.value = true // Freeze the Canvas drawing thread completely (0% GPU/CPU usage)
+        viewModel.isPaused.value = true 
     }
 
     override fun onResume() {
@@ -123,13 +122,12 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
-    // Circadian Color Matrix: All interpolations take 90 seconds using a cubic ease-in-out
     val targetElevation by viewModel.sunElevation
     val effectiveElevation by animateFloatAsState(
         targetValue = targetElevation,
         animationSpec = tween(
-            durationMillis = 90_000, // 90 seconds to complete the transition
-            easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f) // Cubic easing for a 90-second sunset bleed, ensuring no hard cuts
+            durationMillis = 90_000, 
+            easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f) 
         ),
         label = "CircadianElevation"
     )
@@ -137,19 +135,16 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val size = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         
-        // Adaptive Rotation: Detects orientation to adjust the living painting's composition
         val isVertical = maxHeight > maxWidth
-        val horizonY = size.height * if (isVertical) 0.6f else 0.5f // Horizon drops slightly lower in vertical
-        val grassTop = size.height * 0.80f // Grass layer remains pinned to the absolute bottom 20%
+        val horizonY = size.height * if (isVertical) 0.6f else 0.5f 
+        val grassTop = size.height * 0.80f 
         val lakeTop = horizonY
         val lakeBottom = grassTop
 
-        // Hardware Caching: Cache Layers 1, 2, and 3 into a single ImageBitmap
         val staticBackground = remember(size, isVertical) {
             generateStaticBackground(size, horizonY, lakeTop, lakeBottom, isVertical)
         }
 
-        // Celestial Bodies: Update X/Y coordinates only once every 60 seconds to save CPU
         var sunPos by remember { mutableStateOf(Offset.Zero) }
         var moonPos by remember { mutableStateOf(Offset.Zero) }
         
@@ -164,16 +159,14 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 val moonY = size.height * (0.5f + 0.4f * t)
                 moonPos = Offset(moonX.toFloat(), moonY.toFloat())
                 
-                kotlinx.coroutines.delay(60_000) // 60 seconds update interval
+                kotlinx.coroutines.delay(60_000) 
             }
         }
 
-        // Fire & Wood State
         val logsBurning = viewModel.logsBurning
         val burnProgress = remember { List(5) { Animatable(0f) } }
         val fireCenter = Offset(size.width * 0.5f, size.height * 0.88f)
         
-        // Wood Stack: 3 small pine logs in the bottom-left
         val woodStack = remember {
             mutableStateListOf(
                 Offset(size.width * 0.1f, size.height * 0.92f),
@@ -184,58 +177,98 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         var draggingLogIndex by remember { mutableStateOf(-1) }
         var dragOffset by remember { mutableStateOf(Offset.Zero) }
 
-        // Sumi-e Birds State
         val birds = remember {
             List(4) { i ->
                 BirdState(
                     y = 100f + i * 50f,
                     speed = 20f + i * 5f,
-                    scale = 1f - i * 0.15f // Far-away birds move slower and are smaller
+                    scale = 1f - i * 0.15f 
                 )
             }
         }
 
-        // UI State
-        var isDrawerOpen by remember { mutableStateOf(false) }
+        // Defused: Removed 'by' delegate so isDrawerOpen remains a MutableState object
+        val isDrawerOpen = remember { mutableStateOf(false) }
 
-        // Dynamic Audio Adjustment based on flame height
         LaunchedEffect(logsBurning.value) {
             audioEngine.updateFireIntensity(logsBurning.value / 5f)
         }
 
         // Main Canvas Rendering
-        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-            // Draw cached static background with the Circadian Color Matrix overlay applied
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { offset ->
+                            woodStack.forEachIndexed { index, pos ->
+                                if (offset.x > pos.x && offset.x < pos.x + 60 && offset.y > pos.y && offset.y < pos.y + 20) {
+                                    draggingLogIndex = index
+                                    dragOffset = Offset.Zero
+                                }
+                            }
+                        },
+                        onDrag = { change, dragAmount ->
+                            if (draggingLogIndex != -1) {
+                                dragOffset += dragAmount
+                                change.consume()
+                            }
+                        },
+                        onDragEnd = {
+                            if (draggingLogIndex != -1) {
+                                val dropPos = woodStack[draggingLogIndex] + dragOffset
+                                val distance = kotlin.math.hypot(dropPos.x - fireCenter.x, dropPos.y - fireCenter.y)
+                                
+                                if (distance < 100f && logsBurning.value < 5) {
+                                    logsBurning.value++
+                                    audioEngine.playThump()
+                                    
+                                    val logSlot = logsBurning.value - 1
+                                    scope.launch {
+                                        burnProgress[logSlot].animateTo(
+                                            1f,
+                                            tween(150_000, easing = LinearEasing) 
+                                        )
+                                        logsBurning.value--
+                                        burnProgress[logSlot].snapTo(0f)
+                                    }
+                                }
+                            }
+                            draggingLogIndex = -1
+                            dragOffset = Offset.Zero
+                        }
+                    )
+                }
+        ) {
+            // Defused: Wrapped FloatArray in ColorMatrix()
             drawImage(
                 image = staticBackground,
                 topLeft = Offset.Zero,
-                colorFilter = ColorFilter.colorMatrix(getCircadianMatrix(effectiveElevation))
+                colorFilter = ColorFilter.colorMatrix(ColorMatrix(getCircadianMatrix(effectiveElevation)))
             )
 
-            // Layer: Celestial Bodies (Sun/Moon)
             if (effectiveElevation > 0) {
                 drawCircle(
                     brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFFFD700), Color.Transparent), // Pure White core to Warm Yellow edge
+                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFFFD700), Color.Transparent), 
                         center = sunPos,
-                        radius = size.width * 0.04f // Occupies roughly 4% of the screen width
+                        radius = size.width * 0.04f 
                     )
                 )
             } else {
                 drawCircle(
                     brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFFE0E8F0), Color(0x80E0E8F0), Color.Transparent), // Cool Silver with a soft pale glow
+                        colors = listOf(Color(0xFFE0E8F0), Color(0x80E0E8F0), Color.Transparent), 
                         center = moonPos,
                         radius = size.width * 0.03f
                     )
                 )
             }
 
-            // Layer: Lake Reflection Rule
             drawIntoCanvas { canvas ->
                 val pillarPaint = Paint().apply {
                     style = Paint.Style.FILL
-                    maskFilter = BlurMaskFilter(40f, BlurMaskFilter.Blur.NORMAL) // High blur for shimmering water illusion
+                    maskFilter = BlurMaskFilter(40f, BlurMaskFilter.Blur.NORMAL) 
                     isAntiAlias = true
                 }
                 
@@ -243,14 +276,12 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 val reflectColor = if (effectiveElevation > 0) android.graphics.Color.parseColor("#FFD700") else android.graphics.Color.parseColor("#E0E8F0")
                 pillarPaint.color = reflectColor
                 
-                // Draw vertical pillar beneath the celestial body
                 canvas.nativeCanvas.drawRect(reflectX - 20f, lakeTop, reflectX + 20f, lakeBottom, pillarPaint)
                 
-                // Overlay 6 distinct horizontal dashed lines for rippled water
                 val dashPaint = Paint().apply {
                     style = Paint.Style.STROKE
                     strokeWidth = 3f
-                    color = android.graphics.Color.parseColor("#E0F7FA") // Low-opacity cyan for shimmering ripples
+                    color = android.graphics.Color.parseColor("#E0F7FA") 
                     alpha = 120
                     pathEffect = DashPathEffect(floatArrayOf(30f, 20f), 0f)
                     isAntiAlias = true
@@ -265,51 +296,47 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 canvas.nativeCanvas.drawPath(path, dashPaint)
             }
 
-            // Layer: Sumi-e Birds
             val time = viewModel.cinematicTime.value / 1_000_000_000f
             birds.forEach { bird ->
                 val x = (time * bird.speed) % (size.width + 200) - 100
                 val path = androidx.compose.ui.graphics.Path().apply {
                     moveTo(x, bird.y)
-                    quadTo(x + 10 * bird.scale, bird.y - 10 * bird.scale, x + 20 * bird.scale, bird.y)
+                    // Defused: Changed quadTo to quadraticBezierTo for Compose Path
+                    quadraticBezierTo(x + 10 * bird.scale, bird.y - 10 * bird.scale, x + 20 * bird.scale, bird.y)
                     moveTo(x + 20 * bird.scale, bird.y)
-                    quadTo(x + 30 * bird.scale, bird.y - 10 * bird.scale, x + 40 * bird.scale, bird.y)
+                    quadraticBezierTo(x + 30 * bird.scale, bird.y - 10 * bird.scale, x + 40 * bird.scale, bird.y)
                 }
                 drawPath(
                     path = path, 
                     color = Color.Black, 
-                    style = Stroke(width = 2f * bird.scale, cap = StrokeCap.Round) // Sharp, angular Sumi-e ink strokes
+                    style = Stroke(width = 2f * bird.scale, cap = StrokeCap.Round) 
                 )
             }
 
-            // Layer: The Chiaroscuro Glow (Fire localized tinting)
             val flameScale = logsBurning.value / 5f
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0x80E64A19), // Burnt Sienna with 50% alpha for intense, localized warmth
-                        Color(0x00E64A19)  // Fading to transparent for a soft chiaroscuro bleed
+                        Color(0x80E64A19), 
+                        Color(0x00E64A19)  
                     ),
                     center = fireCenter,
                     radius = 400f * flameScale
                 ),
-                blendMode = BlendMode.Screen // Tints surrounding grass and stones warmly without darkening them
+                blendMode = BlendMode.Screen 
             )
 
-            // Layer: Fire & Stones
-            // Ring of 8 stones
             for (i in 0 until 8) {
                 val angle = i * (2 * PI / 8)
                 val stoneX = fireCenter.x + 80f * cos(angle).toFloat()
                 val stoneY = fireCenter.y + 40f * sin(angle).toFloat()
                 drawCircle(
-                    color = Color(0xFF5D4037), // Earthy Umber for the hearth stones
+                    color = Color(0xFF5D4037), 
                     radius = 15f,
                     center = Offset(stoneX, stoneY)
                 )
             }
 
-            // Multi-layered Flame (Bezier curves)
             if (flameScale > 0f) {
                 val flamePath = androidx.compose.ui.graphics.Path().apply {
                     moveTo(fireCenter.x, fireCenter.y)
@@ -326,19 +353,15 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     close()
                 }
                 
-                // Orange transparent tips
                 drawPath(flamePath, color = Color(0x80FF5722)) 
-                // Yellow mid
                 drawPath(flamePath, color = Color(0xFFFFEB3B), style = Stroke(width = 20f * flameScale))
-                // White core
                 drawPath(flamePath, color = Color.White, style = Stroke(width = 10f * flameScale))
             }
 
-            // Wood Stack
             woodStack.forEachIndexed { index, pos ->
                 if (index != draggingLogIndex) {
                     drawRoundRect(
-                        color = Color(0xFF3E2723), // Deep pine bark for the unburnt logs
+                        color = Color(0xFF3E2723), 
                         topLeft = pos,
                         size = Size(60f, 20f),
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
@@ -346,7 +369,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 }
             }
 
-            // Draw dragging log
             if (draggingLogIndex != -1) {
                 drawRoundRect(
                     color = Color(0xFF3E2723),
@@ -357,9 +379,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             }
         }
 
-        // --- THE ESCAPE HATCH ---
-        // A subtle, frosted gear icon in the top-left. If the app crashes or you feel trapped,
-        // tap this to open Android's Home Settings and safely revert to your previous launcher.
         IconButton(
             onClick = {
                 val intent = Intent(Settings.ACTION_HOME_SETTINGS)
@@ -374,81 +393,40 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             Icon(
                 imageVector = Icons.Default.Settings,
                 contentDescription = "Escape Hatch - Change Launcher",
-                tint = Color.White.copy(alpha = 0.6f) // Soft white to blend with the dusk sky
+                tint = Color.White.copy(alpha = 0.6f) 
             )
         }
 
-        // Interaction Layer: Drag and Drop
-        Modifier.pointerInput(Unit) {
-            detectDragGesturesAfterLongPress(
-                onDragStart = { offset ->
-                    woodStack.forEachIndexed { index, pos ->
-                        if (offset.x > pos.x && offset.x < pos.x + 60 && offset.y > pos.y && offset.y < pos.y + 20) {
-                            draggingLogIndex = index
-                            dragOffset = Offset.Zero
-                        }
-                    }
-                },
-                onDrag = { change, dragAmount ->
-                    if (draggingLogIndex != -1) {
-                        dragOffset += dragAmount
-                        change.consume()
-                    }
-                },
-                onDragEnd = {
-                    if (draggingLogIndex != -1) {
-                        val dropPos = woodStack[draggingLogIndex] + dragOffset
-                        val distance = kotlin.math.hypot(dropPos.x - fireCenter.x, dropPos.y - fireCenter.y)
-                        
-                        if (distance < 100f && logsBurning.value < 5) {
-                            logsBurning.value++
-                            audioEngine.playThump()
-                            
-                            val logSlot = logsBurning.value - 1
-                            scope.launch {
-                                burnProgress[logSlot].animateTo(
-                                    1f,
-                                    tween(150_000, easing = LinearEasing) // Exactly 150 seconds, linear for steady consumption into ash
-                                )
-                                logsBurning.value--
-                                burnProgress[logSlot].snapTo(0f)
-                            }
-                        }
-                    }
-                    draggingLogIndex = -1
-                    dragOffset = Offset.Zero
-                }
-            )
-        }
-
-        // The Leather Satchel (App Drawer)
-        LeatherSatchel(context, isDrawerOpen)
+        // Defused: Pass the alignment modifier down to the Satchel
+        LeatherSatchel(
+            context = context, 
+            isExpanded = isDrawerOpen,
+            modifier = Modifier.align(Alignment.BottomEnd)
+        )
     }
 }
 
 @Composable
-fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>) {
+fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier: Modifier = Modifier) {
     val height by animateFloatAsState(
         targetValue = if (isExpanded.value) 600f else 80f,
-        animationSpec = tween(600, easing = FastOutSlowInEasing), // Heavy leather flap easing
+        animationSpec = tween(600, easing = FastOutSlowInEasing), 
         label = "SatchelHeight"
     )
     
     Box(
-        modifier = Modifier
-            .align(Alignment.BottomEnd)
+        modifier = modifier // Receives the align(Alignment.BottomEnd) from the parent
             .padding(24.dp)
             .width(300.dp)
             .height(height.dp)
-            .blur(if (isExpanded.value) 40.dp else 0.dp) // Heavy frost for the glass panel
+            .blur(if (isExpanded.value) 40.dp else 0.dp) 
             .background(
-                if (isExpanded.value) Color(0x80000000) else Color(0xFF4E342E), // Raw Umber impasto blob
+                if (isExpanded.value) Color(0x80000000) else Color(0xFF4E342E), 
                 shape = RoundedCornerShape(24.dp)
             )
             .clickable { isExpanded.value = !isExpanded.value }
     ) {
         if (!isExpanded.value) {
-            // Single white highlight on the impasto leather
             Box(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).size(20.dp).background(Color.White, CircleShape))
         } else {
             val apps = remember { getInstalledApps(context) }
@@ -464,7 +442,7 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>) {
                             bitmap = app.icon.asImageBitmap(),
                             contentDescription = app.name,
                             modifier = Modifier.size(48.dp),
-                            colorFilter = ColorFilter.tint(Color.White) // Clean, minimal white glyph to contrast the chaotic background
+                            colorFilter = ColorFilter.tint(Color.White) 
                         )
                         Text(text = app.name, color = Color.White, fontSize = 10.sp, maxLines = 1)
                     }
@@ -473,8 +451,6 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>) {
         }
     }
 }
-
-// --- Helper Functions & Classes ---
 
 data class BirdState(val y: Float, val speed: Float, val scale: Float)
 data class AppInfo(val name: String, val icon: Bitmap)
@@ -494,7 +470,7 @@ fun getInstalledApps(context: Context): List<AppInfo> {
                 bmp
             }
         )
-    }.take(20) // Limit for performance
+    }.take(20) 
 }
 
 fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBottom: Float, isVertical: Boolean): androidx.compose.ui.graphics.ImageBitmap {
@@ -502,13 +478,12 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     val canvas = Canvas(bitmap)
     val paint = Paint().apply { isAntiAlias = true }
     
-    // Layer 1: The Chromatic Skydome
     val skyShader = android.graphics.LinearGradient(
         0f, 0f, 0f, horizonY,
         intArrayOf(
-            android.graphics.Color.parseColor("#1A237E"), // Prussian Blue for melancholic night depth at the zenith
-            android.graphics.Color.parseColor("#3949AB"), // Ultramarine for the receding atmospheric perspective
-            android.graphics.Color.parseColor("#8C9EFF")  // Soft periwinkle where the sky kisses the horizon
+            android.graphics.Color.parseColor("#1A237E"), 
+            android.graphics.Color.parseColor("#3949AB"), 
+            android.graphics.Color.parseColor("#8C9EFF")  
         ),
         floatArrayOf(0f, 0.6f, 1f),
         Shader.TileMode.CLAMP
@@ -516,7 +491,6 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     paint.shader = skyShader
     canvas.drawRect(0f, 0f, size.width, horizonY, paint)
     
-    // Layer 2: The Distant Pines
     val pinePath = Path()
     pinePath.moveTo(0f, horizonY)
     var x = 0f
@@ -530,24 +504,21 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     
     paint.shader = null
     paint.style = Paint.Style.FILL
-    paint.color = android.graphics.Color.parseColor("#263238") // Blue-grey mist for distant, receding treelines
+    paint.color = android.graphics.Color.parseColor("#263238") 
     
-    // Software layer required for BlurMaskFilter to work on hardware canvas
     canvas.saveLayer(null, null)
     paint.maskFilter = BlurMaskFilter(15f, BlurMaskFilter.Blur.NORMAL)
     canvas.drawPath(pinePath, paint)
     canvas.restore()
     
-    // Layer 3: The "Broken Color" Lake
     paint.maskFilter = null
-    paint.color = android.graphics.Color.parseColor("#0277BD") // Deep cerulean for cold, mysterious water depth
+    paint.color = android.graphics.Color.parseColor("#0277BD") 
     canvas.drawRect(0f, lakeTop, size.width, lakeBottom, paint)
     
-    // Impressionist broken color segments
     val colors = intArrayOf(
-        android.graphics.Color.parseColor("#00838F"), // Teal for crisp water reflections
-        android.graphics.Color.parseColor("#FFF59D"), // Pale Yellow for captured sunlight
-        android.graphics.Color.parseColor("#F48FB1")  // Soft Pink for the dying embers of the sun
+        android.graphics.Color.parseColor("#00838F"), 
+        android.graphics.Color.parseColor("#FFF59D"), 
+        android.graphics.Color.parseColor("#F48FB1")  
     )
     
     paint.style = Paint.Style.STROKE
@@ -564,12 +535,10 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
         }
     }
     
-    // Layer 4: The Cozy Foreground (Grass)
     paint.style = Paint.Style.FILL
-    paint.color = android.graphics.Color.parseColor("#33691E") // Sap-Green for the rich, damp forest floor
+    paint.color = android.graphics.Color.parseColor("#33691E") 
     canvas.drawRect(0f, lakeBottom, size.width, size.height, paint)
     
-    // Dry-brush impasto strokes (larger and darker at the bottom edge)
     for (y in (lakeBottom.toInt() + 5)..size.height.toInt() step 10) {
         val darkness = (y - lakeBottom) / (size.height - lakeBottom)
         paint.color = android.graphics.Color.argb(
@@ -594,7 +563,6 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
 fun getCircadianMatrix(elevation: Float): FloatArray {
     val t = (elevation / 90f).coerceIn(-1f, 1f)
     
-    // Night (Indigo Cozy): Prussian Blue + Ultramarine overlay. Contrast ratio drops.
     val nightMatrix = floatArrayOf(
         0.4f, 0.0f, 0.1f, 0f, 0f,   
         0.0f, 0.3f, 0.2f, 0f, 0f,   
@@ -602,7 +570,6 @@ fun getCircadianMatrix(elevation: Float): FloatArray {
         0f,   0f,   0f,   1f, 0f
     )
 
-    // Dawn/Dusk (Golden Cozy): Madder Lake Red + Gamboge Yellow. Shadows turn soft Mauve.
     val duskMatrix = floatArrayOf(
         1.2f, 0.2f, 0.0f, 0f, 20f,  
         0.2f, 0.9f, 0.1f, 0f, 10f,  
@@ -610,7 +577,6 @@ fun getCircadianMatrix(elevation: Float): FloatArray {
         0f,   0f,   0f,   1f, 0f
     )
 
-    // Midday (Crisp Cozy): Vibrant Cyan and boosted Yellow-Green.
     val dayMatrix = floatArrayOf(
         1.0f, 0.0f, 0.0f, 0f, 0f,   
         0.0f, 1.1f, 0.1f, 0f, 10f,  
@@ -646,7 +612,6 @@ class CozyAudioEngine {
         isPlaying = true
         isPaused = false
         
-        // Ambience: Low-bitrate Brownian noise for soft wind and distant rustling leaves
         ambienceThread = Thread {
             val sampleRate = 16000
             val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -672,7 +637,7 @@ class CozyAudioEngine {
                 if (!isPaused) {
                     for (i in buffer.indices) {
                         val white = Math.random() * 2 - 1
-                        lastOut = (lastOut + (0.02 * white)) / 1.02 // Brownian motion integration
+                        lastOut = (lastOut + (0.02 * white)) / 1.02 
                         buffer[i] = (lastOut * 32767 * 0.15).toInt().toShort()
                     }
                     ambienceTrack?.write(buffer, 0, buffer.size)
@@ -683,7 +648,6 @@ class CozyAudioEngine {
         }
         ambienceThread?.start()
         
-        // Fire: Crackle noise modulated by fireIntensity
         fireThread = Thread {
             val sampleRate = 22050
             val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -707,7 +671,6 @@ class CozyAudioEngine {
             while (isPlaying) {
                 if (!isPaused && fireIntensity > 0.05f) {
                     for (i in buffer.indices) {
-                        // Random pops for crackling wood
                         val crackle = if (Math.random() < 0.005 * fireIntensity) (Math.random() * 2 - 1) * 32767 * fireIntensity else 0.0
                         buffer[i] = crackle.toInt().toShort()
                     }
@@ -725,7 +688,6 @@ class CozyAudioEngine {
     }
     
     fun playThump() {
-        // Distinct low-end "thump" + sharp whoosh when dropping a log
         Thread {
             val sampleRate = 44100
             val duration = 0.2
@@ -734,7 +696,7 @@ class CozyAudioEngine {
             
             for (i in 0 until numSamples) {
                 val t = i.toDouble() / sampleRate
-                val freq = 60 - (t * 100) // Pitch sweep down
+                val freq = 60 - (t * 100) 
                 val wave = sin(2 * PI * freq * t) * (1 - t / duration)
                 val noise = (Math.random() * 2 - 1) * (1 - t / duration) * 0.5
                 buffer[i] = ((wave + noise) * 32767 * 0.5).toInt().toShort()
