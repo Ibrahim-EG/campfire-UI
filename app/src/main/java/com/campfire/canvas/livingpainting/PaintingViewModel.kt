@@ -1,11 +1,18 @@
 package com.campfire.canvas.livingpainting
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import androidx.compose.runtime.mutableStateOf
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Calendar
+import kotlin.math.PI
 import kotlin.math.sin
 
 class PaintingViewModel : ViewModel() {
@@ -17,30 +24,30 @@ class PaintingViewModel : ViewModel() {
     init {
         viewModelScope.launch {
             var lastFrameTime = System.nanoTime()
-            var lastElevationUpdate = 0L
             while (isActive) {
                 if (!isPaused.value) {
                     val currentTime = System.nanoTime()
                     val deltaTime = currentTime - lastFrameTime
-                    
-                    // Cap rendering loop strictly to 24 frames per second
                     if (deltaTime >= 41_666_666L) {
                         cinematicTime.value = currentTime
                         lastFrameTime = currentTime
-                        
-                        // DEFUSED: Elevation now updates once every 5 seconds.
-                        // Updating it 24x/second restarted the 90-second tween 24x/second,
-                        // melting weak tablet CPUs in a recomposition furnace.
-                        if (currentTime - lastElevationUpdate >= 5_000_000_000L) {
-                            lastElevationUpdate = currentTime
-                            val cycleProgress = (currentTime / 1_000_000_000L) % 600 / 600.0
-                            sunElevation.value = (sin(cycleProgress * Math.PI * 2) * 90).toFloat()
-                        }
                     }
                 } else {
                     lastFrameTime = System.nanoTime() 
                 }
                 delay(16L) 
+            }
+        }
+        
+        // Real-Time Solar Tracker
+        viewModelScope.launch {
+            while (isActive) {
+                val cal = Calendar.getInstance()
+                val hour = cal.get(Calendar.HOUR_OF_DAY) + cal.get(Calendar.MINUTE) / 60f
+                // Sun arc: 6AM = 0deg, 12PM = 90deg, 6PM = 0deg, 12AM = -90deg
+                val angle = (hour - 6f) / 12f * Math.PI
+                sunElevation.value = (sin(angle) * 90).toFloat()
+                delay(60_000) // Update every minute
             }
         }
     }
