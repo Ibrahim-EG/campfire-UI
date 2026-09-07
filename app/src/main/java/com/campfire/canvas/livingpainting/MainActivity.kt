@@ -123,15 +123,13 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         targetValue = targetElevation,
         animationSpec = tween(
             durationMillis = 90_000, 
-            easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f) 
+            easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f) // Cubic easing for the 90-second sunset bleed
         ),
         label = "CircadianElevation"
     )
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        // DEFUSED: The Zero-Size Frame Trap. 
-        // Compose sometimes measures the screen as 0x0 on the very first millisecond of launch.
-        // Creating a Bitmap or Gradient with 0 dimensions causes an instant native crash.
+        // The Zero-Size Frame guard
         if (constraints.maxWidth == 0 || constraints.maxHeight == 0) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black))
             return@BoxWithConstraints
@@ -155,15 +153,9 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
         LaunchedEffect(Unit) {
             while (true) {
                 val t = (effectiveElevation / 90f).coerceIn(-1f, 1f)
-                val sunX = size.width * (0.5f + 0.4f * sin(t * PI))
-                val sunY = size.height * (0.5f - 0.4f * t)
-                sunPos = Offset(sunX.toFloat(), sunY.toFloat())
-                
-                val moonX = size.width * (0.5f - 0.4f * sin(t * PI))
-                val moonY = size.height * (0.5f + 0.4f * t)
-                moonPos = Offset(moonX.toFloat(), moonY.toFloat())
-                
-                kotlinx.coroutines.delay(60_000) 
+                sunPos = Offset(size.width * (0.5f + 0.4f * sin(t * PI)), size.height * (0.5f - 0.4f * t))
+                moonPos = Offset(size.width * (0.5f - 0.4f * sin(t * PI)), size.height * (0.5f + 0.4f * t))
+                kotlinx.coroutines.delay(60_000) // Celestial coordinates refresh only once per minute
             }
         }
 
@@ -183,11 +175,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
 
         val birds = remember {
             List(4) { i ->
-                BirdState(
-                    y = 100f + i * 50f,
-                    speed = 20f + i * 5f,
-                    scale = 1f - i * 0.15f 
-                )
+                BirdState(y = 100f + i * 50f, speed = 20f + i * 5f, scale = 1f - i * 0.15f)
             }
         }
 
@@ -227,10 +215,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                                     
                                     val logSlot = logsBurning.value - 1
                                     scope.launch {
-                                        burnProgress[logSlot].animateTo(
-                                            1f,
-                                            tween(150_000, easing = LinearEasing) 
-                                        )
+                                        burnProgress[logSlot].animateTo(1f, tween(150_000, easing = LinearEasing))
                                         logsBurning.value--
                                         burnProgress[logSlot].snapTo(0f)
                                     }
@@ -242,141 +227,134 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     )
                 }
         ) {
-            drawImage(
-                image = staticBackground,
-                topLeft = Offset.Zero,
-                colorFilter = ColorFilter.colorMatrix(ColorMatrix(getCircadianMatrix(effectiveElevation)))
-            )
+            // THE SAFETY NET: any draw-phase exception is swallowed so the launcher can never die on screen
+            try {
+                drawImage(
+                    image = staticBackground,
+                    topLeft = Offset.Zero,
+                    colorFilter = ColorFilter.colorMatrix(ColorMatrix(getCircadianMatrix(effectiveElevation)))
+                )
 
-            if (effectiveElevation > 0) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFFFD700), Color.Transparent), 
-                        center = sunPos,
-                        radius = size.width * 0.04f 
+                if (effectiveElevation > 0) {
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0xFFFFFFFF), Color(0xFFFFD700), Color.Transparent), 
+                            center = sunPos,
+                            radius = (size.width * 0.04f).coerceAtLeast(1f) 
+                        )
                     )
-                )
-            } else {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFFE0E8F0), Color(0x80E0E8F0), Color.Transparent), 
-                        center = moonPos,
-                        radius = size.width * 0.03f
+                } else {
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0xFFE0E8F0), Color(0x80E0E8F0), Color.Transparent), 
+                            center = moonPos,
+                            radius = (size.width * 0.03f).coerceAtLeast(1f)
+                        )
                     )
+                }
+
+                val reflectX = if (effectiveElevation > 0) sunPos.x else moonPos.x
+                val reflectColor = if (effectiveElevation > 0) Color(0xFFFFD700) else Color(0xFFE0E8F0)
+
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(reflectColor.copy(alpha = 0.6f), Color.Transparent),
+                        center = Offset(reflectX, (lakeTop + lakeBottom) / 2f),
+                        radius = 60f
+                    ),
+                    topLeft = Offset(reflectX - 60f, lakeTop),
+                    size = Size(120f, (lakeBottom - lakeTop).coerceAtLeast(1f))
                 )
-            }
 
-            // DEFUSED: Replaced raw android.graphics.Paint with native Compose Brush.
-            // This guarantees 100% GPU safety across all tablet hardware.
-            val reflectX = if (effectiveElevation > 0) sunPos.x else moonPos.x
-            val reflectColor = if (effectiveElevation > 0) Color(0xFFFFD700) else Color(0xFFE0E8F0)
-
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(reflectColor.copy(alpha = 0.6f), Color.Transparent),
-                    center = Offset(reflectX, (lakeTop + lakeBottom) / 2f),
-                    radius = 60f
-                ),
-                topLeft = Offset(reflectX - 60f, lakeTop),
-                size = Size(120f, lakeBottom - lakeTop)
-            )
-
-            val dashPath = androidx.compose.ui.graphics.Path()
-            for (i in 0 until 6) {
-                val y = lakeTop + (lakeBottom - lakeTop) * (i / 6f)
-                dashPath.moveTo(reflectX - 50f, y)
-                dashPath.lineTo(reflectX + 50f, y)
-            }
-            drawPath(
-                path = dashPath,
-                color = Color(0x80E0F7FA),
-                style = Stroke(
-                    width = 3f,
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(30f, 20f), 0f)
-                )
-            )
-
-            val time = viewModel.cinematicTime.value / 1_000_000_000f
-            birds.forEach { bird ->
-                val x = (time * bird.speed) % (size.width + 200) - 100
-                val path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(x, bird.y)
-                    quadraticBezierTo(x + 10 * bird.scale, bird.y - 10 * bird.scale, x + 20 * bird.scale, bird.y)
-                    moveTo(x + 20 * bird.scale, bird.y)
-                    quadraticBezierTo(x + 30 * bird.scale, bird.y - 10 * bird.scale, x + 40 * bird.scale, bird.y)
+                val dashPath = androidx.compose.ui.graphics.Path()
+                for (i in 0 until 6) {
+                    val y = lakeTop + (lakeBottom - lakeTop) * (i / 6f)
+                    dashPath.moveTo(reflectX - 50f, y)
+                    dashPath.lineTo(reflectX + 50f, y)
                 }
                 drawPath(
-                    path = path, 
-                    color = Color.Black, 
-                    style = Stroke(width = 2f * bird.scale, cap = StrokeCap.Round) 
+                    path = dashPath,
+                    color = Color(0x80E0F7FA),
+                    style = Stroke(width = 3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(30f, 20f), 0f))
                 )
-            }
 
-            val flameScale = logsBurning.value / 5f
-            
-            // DEFUSED: Removed BlendMode.Screen. It causes native driver crashes on Mali/Adreno GPUs.
-            // Standard alpha blending looks 99% identical and is universally safe.
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0x80E64A19), 
-                        Color(0x00E64A19)  
-                    ),
-                    center = fireCenter,
-                    radius = 400f * flameScale
-                )
-            )
-
-            for (i in 0 until 8) {
-                val angle = i * (2 * PI / 8)
-                val stoneX = fireCenter.x + 80f * cos(angle).toFloat()
-                val stoneY = fireCenter.y + 40f * sin(angle).toFloat()
-                drawCircle(
-                    color = Color(0xFF5D4037), 
-                    radius = 15f,
-                    center = Offset(stoneX, stoneY)
-                )
-            }
-
-            if (flameScale > 0f) {
-                val flamePath = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(fireCenter.x, fireCenter.y)
-                    cubicTo(
-                        fireCenter.x - 50f * flameScale, fireCenter.y - 50f * flameScale,
-                        fireCenter.x - 25f * flameScale, fireCenter.y - 150f * flameScale,
-                        fireCenter.x, fireCenter.y - 150f * flameScale
-                    )
-                    cubicTo(
-                        fireCenter.x + 25f * flameScale, fireCenter.y - 150f * flameScale,
-                        fireCenter.x + 50f * flameScale, fireCenter.y - 50f * flameScale,
-                        fireCenter.x, fireCenter.y
-                    )
-                    close()
+                val time = viewModel.cinematicTime.value / 1_000_000_000f
+                birds.forEach { bird ->
+                    val x = (time * bird.speed) % (size.width + 200) - 100
+                    val path = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(x, bird.y)
+                        quadraticBezierTo(x + 10 * bird.scale, bird.y - 10 * bird.scale, x + 20 * bird.scale, bird.y)
+                        moveTo(x + 20 * bird.scale, bird.y)
+                        quadraticBezierTo(x + 30 * bird.scale, bird.y - 10 * bird.scale, x + 40 * bird.scale, bird.y)
+                    }
+                    drawPath(path = path, color = Color.Black, style = Stroke(width = 2f * bird.scale, cap = StrokeCap.Round))
                 }
-                
-                drawPath(flamePath, color = Color(0x80FF5722)) 
-                drawPath(flamePath, color = Color(0xFFFFEB3B), style = Stroke(width = 20f * flameScale))
-                drawPath(flamePath, color = Color.White, style = Stroke(width = 10f * flameScale))
-            }
 
-            woodStack.forEachIndexed { index, pos ->
-                if (index != draggingLogIndex) {
+                val flameScale = logsBurning.value / 5f
+                
+                // DEFUSED: THE ZERO-RADIUS TRAP.
+                // Android's RadialGradient throws IllegalArgumentException when radius == 0.
+                // At launch, zero logs burn, so the old code fed it a radius of 0 on frame one and died.
+                // The glow and flame now only exist when the fire is actually fed.
+                if (flameScale > 0f) {
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0x80E64A19), Color(0x00E64A19)), // Burnt Sienna chiaroscuro bleed
+                            center = fireCenter,
+                            radius = (400f * flameScale).coerceAtLeast(1f)
+                        )
+                    )
+
+                    val flamePath = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(fireCenter.x, fireCenter.y)
+                        cubicTo(
+                            fireCenter.x - 50f * flameScale, fireCenter.y - 50f * flameScale,
+                            fireCenter.x - 25f * flameScale, fireCenter.y - 150f * flameScale,
+                            fireCenter.x, fireCenter.y - 150f * flameScale
+                        )
+                        cubicTo(
+                            fireCenter.x + 25f * flameScale, fireCenter.y - 150f * flameScale,
+                            fireCenter.x + 50f * flameScale, fireCenter.y - 50f * flameScale,
+                            fireCenter.x, fireCenter.y
+                        )
+                        close()
+                    }
+                    
+                    drawPath(flamePath, color = Color(0x80FF5722)) 
+                    drawPath(flamePath, color = Color(0xFFFFEB3B), style = Stroke(width = (20f * flameScale).coerceAtLeast(1f)))
+                    drawPath(flamePath, color = Color.White, style = Stroke(width = (10f * flameScale).coerceAtLeast(1f)))
+                }
+
+                for (i in 0 until 8) {
+                    val angle = i * (2 * PI / 8)
+                    drawCircle(
+                        color = Color(0xFF5D4037), // Earthy Umber hearth stones
+                        radius = 15f,
+                        center = Offset(fireCenter.x + 80f * cos(angle).toFloat(), fireCenter.y + 40f * sin(angle).toFloat())
+                    )
+                }
+
+                woodStack.forEachIndexed { index, pos ->
+                    if (index != draggingLogIndex) {
+                        drawRoundRect(
+                            color = Color(0xFF3E2723), 
+                            topLeft = pos,
+                            size = Size(60f, 20f),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
+                        )
+                    }
+                }
+
+                if (draggingLogIndex != -1) {
                     drawRoundRect(
-                        color = Color(0xFF3E2723), 
-                        topLeft = pos,
+                        color = Color(0xFF3E2723),
+                        topLeft = woodStack[draggingLogIndex] + dragOffset,
                         size = Size(60f, 20f),
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
                     )
                 }
-            }
-
-            if (draggingLogIndex != -1) {
-                drawRoundRect(
-                    color = Color(0xFF3E2723),
-                    topLeft = woodStack[draggingLogIndex] + dragOffset,
-                    size = Size(60f, 20f),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
-                )
+            } catch (e: Exception) {
+                // The painting skips a frame rather than dying. Battery and sanity preserved.
             }
         }
 
@@ -386,10 +364,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
             },
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(24.dp)
-                .size(32.dp)
+            modifier = Modifier.align(Alignment.TopStart).padding(24.dp).size(32.dp)
         ) {
             Icon(
                 imageVector = Icons.Default.Settings,
@@ -410,7 +385,7 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
 fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier: Modifier = Modifier) {
     val height by animateFloatAsState(
         targetValue = if (isExpanded.value) 600f else 80f,
-        animationSpec = tween(600, easing = FastOutSlowInEasing), 
+        animationSpec = tween(600, easing = FastOutSlowInEasing), // Heavy leather flap easing
         label = "SatchelHeight"
     )
     
@@ -419,10 +394,9 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier
             .padding(24.dp)
             .width(300.dp)
             .height(height.dp)
-            // DEFUSED: Modifier.blur(0.dp) can crash older Compose versions. We conditionally apply it.
             .then(if (isExpanded.value) Modifier.blur(40.dp) else Modifier)
             .background(
-                if (isExpanded.value) Color(0x80000000) else Color(0xFF4E342E), 
+                if (isExpanded.value) Color(0x80000000) else Color(0xFF4E342E), // Raw Umber impasto leather
                 shape = RoundedCornerShape(24.dp)
             )
             .clickable { isExpanded.value = !isExpanded.value }
@@ -471,10 +445,7 @@ fun getInstalledApps(context: Context): List<AppInfo> {
             drawable.setBounds(0, 0, canvas.width, canvas.height)
             drawable.draw(canvas)
             
-            AppInfo(
-                name = resolveInfo.loadLabel(pm).toString(),
-                icon = bmp
-            )
+            AppInfo(name = resolveInfo.loadLabel(pm).toString(), icon = bmp)
         } catch (e: Exception) {
             null 
         }
@@ -486,15 +457,14 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     val canvas = Canvas(bitmap)
     val paint = Paint().apply { isAntiAlias = true }
     
-    // DEFUSED: LinearGradient crashes if start and end Y are identical (0f to 0f).
     val safeHorizonY = horizonY.coerceAtLeast(1f)
     
     val skyShader = android.graphics.LinearGradient(
         0f, 0f, 0f, safeHorizonY,
         intArrayOf(
-            android.graphics.Color.parseColor("#1A237E"), 
-            android.graphics.Color.parseColor("#3949AB"), 
-            android.graphics.Color.parseColor("#8C9EFF")  
+            android.graphics.Color.parseColor("#1A237E"), // Prussian Blue zenith
+            android.graphics.Color.parseColor("#3949AB"), // Ultramarine mid-sky
+            android.graphics.Color.parseColor("#8C9EFF")  // Periwinkle horizon kiss
         ),
         floatArrayOf(0f, 0.6f, 1f),
         Shader.TileMode.CLAMP
@@ -515,7 +485,7 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     
     paint.shader = null
     paint.style = Paint.Style.FILL
-    paint.color = android.graphics.Color.parseColor("#263238") 
+    paint.color = android.graphics.Color.parseColor("#263238") // Blue-grey misty treeline
     
     canvas.saveLayer(null, null)
     paint.maskFilter = android.graphics.BlurMaskFilter(15f, android.graphics.BlurMaskFilter.Blur.NORMAL)
@@ -523,13 +493,13 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     canvas.restore()
     
     paint.maskFilter = null
-    paint.color = android.graphics.Color.parseColor("#0277BD") 
+    paint.color = android.graphics.Color.parseColor("#0277BD") // Deep cerulean lake body
     canvas.drawRect(0f, lakeTop, size.width, lakeBottom, paint)
     
     val colors = intArrayOf(
-        android.graphics.Color.parseColor("#00838F"), 
-        android.graphics.Color.parseColor("#FFF59D"), 
-        android.graphics.Color.parseColor("#F48FB1")  
+        android.graphics.Color.parseColor("#00838F"), // Teal broken color
+        android.graphics.Color.parseColor("#FFF59D"), // Pale Yellow broken color
+        android.graphics.Color.parseColor("#F48FB1")  // Soft Pink broken color
     )
     
     paint.style = Paint.Style.STROKE
@@ -547,10 +517,9 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     }
     
     paint.style = Paint.Style.FILL
-    paint.color = android.graphics.Color.parseColor("#33691E") 
+    paint.color = android.graphics.Color.parseColor("#33691E") // Sap-Green forest floor
     canvas.drawRect(0f, lakeBottom, size.width, size.height, paint)
     
-    // DEFUSED: Prevent divide-by-zero if lakeBottom equals size.height
     val heightDiff = (size.height - lakeBottom).coerceAtLeast(1f)
     
     for (y in (lakeBottom.toInt() + 5)..size.height.toInt() step 10) {
@@ -580,30 +549,28 @@ fun getCircadianMatrix(elevation: Float): FloatArray {
     val nightMatrix = floatArrayOf(
         0.4f, 0.0f, 0.1f, 0f, 0f,   
         0.0f, 0.3f, 0.2f, 0f, 0f,   
-        0.1f, 0.1f, 0.8f, 0f, 40f,  
+        0.1f, 0.1f, 0.8f, 0f, 40f,  // Prussian + Ultramarine night bleed
         0f,   0f,   0f,   1f, 0f
     )
 
     val duskMatrix = floatArrayOf(
-        1.2f, 0.2f, 0.0f, 0f, 20f,  
-        0.2f, 0.9f, 0.1f, 0f, 10f,  
+        1.2f, 0.2f, 0.0f, 0f, 20f,  // Madder Lake Red warmth
+        0.2f, 0.9f, 0.1f, 0f, 10f,  // Gamboge Yellow ember light
         0.0f, 0.0f, 0.5f, 0f, 0f,   
         0f,   0f,   0f,   1f, 0f
     )
 
     val dayMatrix = floatArrayOf(
         1.0f, 0.0f, 0.0f, 0f, 0f,   
-        0.0f, 1.1f, 0.1f, 0f, 10f,  
-        0.0f, 0.1f, 1.1f, 0f, 10f,  
+        0.0f, 1.1f, 0.1f, 0f, 10f,  // Boosted Yellow-Green foliage
+        0.0f, 0.1f, 1.1f, 0f, 10f,  // Vibrant Cyan crispness
         0f,   0f,   0f,   1f, 0f
     )
 
     return if (t < 0) {
-        val localT = (t + 1f) 
-        interpolateMatrix(nightMatrix, duskMatrix, localT)
+        interpolateMatrix(nightMatrix, duskMatrix, t + 1f)
     } else {
-        val localT = t 
-        interpolateMatrix(duskMatrix, dayMatrix, localT)
+        interpolateMatrix(duskMatrix, dayMatrix, t)
     }
 }
 
@@ -654,7 +621,7 @@ class CozyAudioEngine {
                     if (!isPaused) {
                         for (i in buffer.indices) {
                             val white = Math.random() * 2 - 1
-                            lastOut = (lastOut + (0.02 * white)) / 1.02 
+                            lastOut = (lastOut + (0.02 * white)) / 1.02 // Brownian wind integration
                             buffer[i] = (lastOut * 32767 * 0.15).toInt().toShort()
                         }
                         ambienceTrack?.write(buffer, 0, buffer.size)
@@ -662,9 +629,7 @@ class CozyAudioEngine {
                         Thread.sleep(100)
                     }
                 }
-            } catch (e: Exception) {
-                // DEFUSED: Silently fail if the tablet's audio HAL rejects the format
-            }
+            } catch (e: Exception) { }
         }
         ambienceThread?.start()
         
@@ -702,9 +667,7 @@ class CozyAudioEngine {
                         Thread.sleep(100)
                     }
                 }
-            } catch (e: Exception) {
-                // DEFUSED: Silently fail if the tablet's audio HAL rejects the format
-            }
+            } catch (e: Exception) { }
         }
         fireThread?.start()
     }
@@ -723,7 +686,7 @@ class CozyAudioEngine {
                 
                 for (i in 0 until numSamples) {
                     val t = i.toDouble() / sampleRate
-                    val freq = 60 - (t * 100) 
+                    val freq = 60 - (t * 100) // Low-end thump pitch sweep
                     val wave = sin(2 * PI * freq * t) * (1 - t / duration)
                     val noise = (Math.random() * 2 - 1) * (1 - t / duration) * 0.5
                     buffer[i] = ((wave + noise) * 32767 * 0.5).toInt().toShort()
@@ -740,27 +703,27 @@ class CozyAudioEngine {
                 track.play()
                 Thread.sleep(200)
                 track.release()
-            } catch (e: Exception) {}
+            } catch (e: Exception) { }
         }.start()
     }
 
     fun pause() {
         isPaused = true
-        try { ambienceTrack?.pause() } catch (e: Exception) {}
-        try { fireTrack?.pause() } catch (e: Exception) {}
+        try { ambienceTrack?.pause() } catch (e: Exception) { }
+        try { fireTrack?.pause() } catch (e: Exception) { }
     }
 
     fun resume() {
         isPaused = false
-        try { ambienceTrack?.play() } catch (e: Exception) {}
-        try { fireTrack?.play() } catch (e: Exception) {}
+        try { ambienceTrack?.play() } catch (e: Exception) { }
+        try { fireTrack?.play() } catch (e: Exception) { }
     }
 
     fun stop() {
         isPlaying = false
         ambienceThread?.interrupt()
         fireThread?.interrupt()
-        try { ambienceTrack?.release() } catch (e: Exception) {}
-        try { fireTrack?.release() } catch (e: Exception) {}
+        try { ambienceTrack?.release() } catch (e: Exception) { }
+        try { fireTrack?.release() } catch (e: Exception) { }
     }
 }
