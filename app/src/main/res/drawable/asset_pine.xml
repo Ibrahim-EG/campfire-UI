@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp" android:height="150dp"
+    android:viewportWidth="100" android:viewportHeight="150">
+    <!-- Complex path for a natural, irregular pine tree -->
+    <path android:fillColor="#FF000000" android:pathData="M50,5 L45,15 L48,15 L40,35 L45,35 L35,55 L42,55 L30,80 L40,80 L25,110 L38,110 L20,145 L45,145 L45,150 L55,150 L55,145 L80,145 L62,110 L75,110 L60,80 L70,80 L58,55 L65,55 L55,35 L60,35 L52,15 L55,15 Z"/>
+</vector>
