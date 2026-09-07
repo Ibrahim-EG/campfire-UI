@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Prussian Blue #1A237E: melancholic night depth as the icon's dome -->
+    <path android:fillColor="#1A237E" android:pathData="M0,0h108v108h-108z"/>
+    <!-- Ultramarine #283593: haze breathing low along the horizon of the dome -->
+    <path android:fillColor="#283593" android:pathData="M0,70 Q54,58 108,70 L108,108 L0,108 Z"/>
+    <!-- Cool Silver #E0E8F0 stars: pale witnesses keeping watch over the fire -->
+    <path android:fillColor="#E0E8F0" android:fillAlpha="0.85" android:pathData="M22,24 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"/>
+    <path android:fillColor="#E0E8F0" android:fillAlpha="0.60" android:pathData="M84,18 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0"/>
+    <path android:fillColor="#E0E8F0" android:fillAlpha="0.70" android:pathData="M70,34 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0"/>
+    <path android:fillColor="#E0E8F0" android:fillAlpha="0.50" android:pathData="M34,44 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0"/>
+</vector>
