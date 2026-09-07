@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
@@ -187,14 +186,12 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             }
         }
 
-        // Defused: Removed 'by' delegate so isDrawerOpen remains a MutableState object
         val isDrawerOpen = remember { mutableStateOf(false) }
 
         LaunchedEffect(logsBurning.value) {
             audioEngine.updateFireIntensity(logsBurning.value / 5f)
         }
 
-        // Main Canvas Rendering
         androidx.compose.foundation.Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -240,7 +237,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                     )
                 }
         ) {
-            // Defused: Wrapped FloatArray in ColorMatrix()
             drawImage(
                 image = staticBackground,
                 topLeft = Offset.Zero,
@@ -268,15 +264,21 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             drawIntoCanvas { canvas ->
                 val pillarPaint = Paint().apply {
                     style = Paint.Style.FILL
-                    maskFilter = BlurMaskFilter(40f, BlurMaskFilter.Blur.NORMAL) 
                     isAntiAlias = true
                 }
                 
                 val reflectX = if (effectiveElevation > 0) sunPos.x else moonPos.x
-                val reflectColor = if (effectiveElevation > 0) android.graphics.Color.parseColor("#FFD700") else android.graphics.Color.parseColor("#E0E8F0")
-                pillarPaint.color = reflectColor
+                val reflectColorInt = if (effectiveElevation > 0) android.graphics.Color.parseColor("#FFD700") else android.graphics.Color.parseColor("#E0E8F0")
                 
-                canvas.nativeCanvas.drawRect(reflectX - 20f, lakeTop, reflectX + 20f, lakeBottom, pillarPaint)
+                // Defused: BlurMaskFilter is NOT supported on hardware-accelerated Compose Canvases and can cause native GPU crashes.
+                // We fake the shimmering water blur using a fully GPU-accelerated RadialGradient.
+                pillarPaint.shader = android.graphics.RadialGradient(
+                    reflectX, (lakeTop + lakeBottom) / 2f, 60f,
+                    reflectColorInt, android.graphics.Color.TRANSPARENT,
+                    android.graphics.Shader.TileMode.CLAMP
+                )
+                
+                canvas.nativeCanvas.drawRect(reflectX - 60f, lakeTop, reflectX + 60f, lakeBottom, pillarPaint)
                 
                 val dashPaint = Paint().apply {
                     style = Paint.Style.STROKE
@@ -301,7 +303,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
                 val x = (time * bird.speed) % (size.width + 200) - 100
                 val path = androidx.compose.ui.graphics.Path().apply {
                     moveTo(x, bird.y)
-                    // Defused: Changed quadTo to quadraticBezierTo for Compose Path
                     quadraticBezierTo(x + 10 * bird.scale, bird.y - 10 * bird.scale, x + 20 * bird.scale, bird.y)
                     moveTo(x + 20 * bird.scale, bird.y)
                     quadraticBezierTo(x + 30 * bird.scale, bird.y - 10 * bird.scale, x + 40 * bird.scale, bird.y)
@@ -397,7 +398,6 @@ fun CampfireCanvasApp(viewModel: PaintingViewModel, audioEngine: CozyAudioEngine
             )
         }
 
-        // Defused: Pass the alignment modifier down to the Satchel
         LeatherSatchel(
             context = context, 
             isExpanded = isDrawerOpen,
@@ -415,7 +415,7 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier
     )
     
     Box(
-        modifier = modifier // Receives the align(Alignment.BottomEnd) from the parent
+        modifier = modifier
             .padding(24.dp)
             .width(300.dp)
             .height(height.dp)
@@ -459,17 +459,29 @@ fun getInstalledApps(context: Context): List<AppInfo> {
     val pm = context.packageManager
     val intent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
     val appList = pm.queryIntentActivities(intent, 0)
-    return appList.map { 
-        AppInfo(
-            name = it.loadLabel(pm).toString(),
-            icon = it.activityInfo.loadIcon(pm).let { drawable ->
-                val bmp = Bitmap.createBitmap(drawable.intrinsicWidth, drawable.intrinsicHeight, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bmp)
-                drawable.setBounds(0, 0, canvas.width, canvas.height)
-                drawable.draw(canvas)
-                bmp
-            }
-        )
+    return appList.mapNotNull { resolveInfo ->
+        try {
+            val drawable = resolveInfo.activityInfo.loadIcon(pm)
+            
+            // Defused: Modern Adaptive Icons often report -1 for dimensions before being bound to a view.
+            // Passing -1 to Bitmap.createBitmap throws an IllegalArgumentException and crashes the app.
+            // We enforce a safe 108x108 fallback size.
+            val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 108
+            val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 108
+            
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+            
+            AppInfo(
+                name = resolveInfo.loadLabel(pm).toString(),
+                icon = bmp
+            )
+        } catch (e: Exception) {
+            // Defused: Catch any rogue PackageManager exceptions so one bad app doesn't kill the canvas
+            null 
+        }
     }.take(20) 
 }
 
@@ -507,7 +519,7 @@ fun generateStaticBackground(size: Size, horizonY: Float, lakeTop: Float, lakeBo
     paint.color = android.graphics.Color.parseColor("#263238") 
     
     canvas.saveLayer(null, null)
-    paint.maskFilter = BlurMaskFilter(15f, BlurMaskFilter.Blur.NORMAL)
+    paint.maskFilter = android.graphics.BlurMaskFilter(15f, android.graphics.BlurMaskFilter.Blur.NORMAL)
     canvas.drawPath(pinePath, paint)
     canvas.restore()
     
@@ -614,7 +626,9 @@ class CozyAudioEngine {
         
         ambienceThread = Thread {
             val sampleRate = 16000
-            val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            var bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            if (bufferSize <= 0) bufferSize = 4096 // Defused: Fallback if the tablet's audio hardware rejects the sample rate
+            
             ambienceTrack = AudioTrack.Builder()
                 .setAudioAttributes(AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -650,7 +664,9 @@ class CozyAudioEngine {
         
         fireThread = Thread {
             val sampleRate = 22050
-            val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            var bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            if (bufferSize <= 0) bufferSize = 4096 // Defused: Fallback if the tablet's audio hardware rejects the sample rate
+            
             fireTrack = AudioTrack.Builder()
                 .setAudioAttributes(AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
