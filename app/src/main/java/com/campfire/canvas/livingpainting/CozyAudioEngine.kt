@@ -3,8 +3,6 @@ package com.campfire.canvas.livingpainting
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.media.PlaybackParams
-import android.os.Build
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -21,7 +19,6 @@ class CozyAudioEngine {
         if (playing) return
         playing = true; paused = false
 
-        // BINAURAL WIND: stereo brown noise, decorrelated ears + 0.05 Hz pan LFO + rustle AM
         windThread = Thread {
             try {
                 val sr = 22050
@@ -40,7 +37,7 @@ class CozyAudioEngine {
                     if (!paused) {
                         for (i in 0 until frames) {
                             t += 1.0 / sr
-                            val pan = 0.25 * sin(2.0 * PI * 0.05 * t)          // slow spatial sweep
+                            val pan = 0.25 * sin(2.0 * PI * 0.05 * t)
                             val rustle = 0.55 + 0.45 * sin(2.0 * PI * 0.31 * t + sin(t * 0.7) * 2.0)
                             val wl = Math.random() * 2 - 1; val wr = Math.random() * 2 - 1
                             bl = (bl + 0.02 * wl) / 1.02; br = (br + 0.02 * wr) / 1.02
@@ -55,7 +52,6 @@ class CozyAudioEngine {
             } catch (e: Exception) { }
         }; windThread?.start()
 
-        // FIRE BED: low rumble + poisson crackle pops; pitch & volume track flame height
         fireThread = Thread {
             try {
                 val sr = 22050
@@ -89,14 +85,12 @@ class CozyAudioEngine {
     fun updateFire(f: Float) {
         intensity = f.coerceIn(0f, 1f)
         runCatching {
-            fireTrack?.setVolume(0.15f + 0.85f * intensity, 0.15f + 0.85f * intensity)
-            if (Build.VERSION.SDK_INT >= 23 && intensity > 0.03f) {
-                fireTrack?.playbackParams = PlaybackParams.create().setPitch(0.85f + 0.5f * intensity).setSpeed(0.92f + 0.25f * intensity)
-            }
+            // API 21+ single volume control (universally safe)
+            fireTrack?.setVolume(0.15f + 0.85f * intensity)
         }
     }
 
-    fun playDrop() { // low-end thump + sharp whoosh
+    fun playDrop() {
         Thread {
             try {
                 val sr = 44100
