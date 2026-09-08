@@ -2,12 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions for solar elevation tracking and app drawer population -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- THE KEY TO THE SATCHEL: Forces Android 11+ to show installed apps even in Preview Mode -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -17,6 +15,7 @@
 
     <application
         android:allowBackup="true"
+        android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Campfire Canvas"
         android:roundIcon="@mipmap/ic_launcher_round"
