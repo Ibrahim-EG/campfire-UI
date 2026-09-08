@@ -6,6 +6,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,6 +40,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -54,18 +57,15 @@ import kotlinx.coroutines.withContext
 
 data class AppInfo(val name: String, val icon: Bitmap, val packageName: String)
 
-// ---- THE LEATHER SATCHEL: entirely hand-drawn, hand-animated. Stitch by stitch. ----
 @Composable
 fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier: Modifier = Modifier) {
-    // Heavy leather easing: the bag settles open like a real flap
-    val t by animateFloatAsState(if (isExpanded.value) 1f else 0f, tween(650, easing = FastOutSlowInEasing), "satchelMorph")
+    val t by animateFloatAsState(if (isExpanded.value) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "satchelMorph")
     var apps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
     LaunchedEffect(isExpanded.value) {
         if (isExpanded.value && apps.isEmpty()) apps = withContext(Dispatchers.Default) { loadApps(context) }
     }
 
     Box(modifier = modifier.padding(20.dp).width(320.dp).clickable { isExpanded.value = !isExpanded.value }) {
-        // Frosted glass panel rising from the bag
         if (t > 0.02f) {
             Box(
                 Modifier
@@ -91,37 +91,30 @@ fun LeatherSatchel(context: Context, isExpanded: MutableState<Boolean>, modifier
                 }
             }
         }
-        // The bag itself: drawn stitch by stitch, sinking away as the panel rises
         if (t < 0.98f) {
             Canvas(Modifier.align(Alignment.BottomEnd).size(118.dp, 92.dp).padding(2.dp)) {
                 val w = size.width; val h = size.height
                 val a = 1f - t
-                // body: soft trapezoid in Raw Umber with vertical volume
                 val body = Path().apply {
                     moveTo(w * 0.08f, h * 0.34f); lineTo(w * 0.92f, h * 0.34f)
-                    quadTo(w * 0.99f, h * 0.36f, w * 0.97f, h * 0.52f); lineTo(w * 0.93f, h * 0.90f)
-                    quadTo(w * 0.92f, h, w * 0.85f, h); lineTo(w * 0.15f, h)
-                    quadTo(w * 0.08f, h, w * 0.07f, h * 0.90f); lineTo(w * 0.03f, h * 0.52f)
-                    quadTo(w * 0.01f, h * 0.36f, w * 0.08f, h * 0.34f); close()
+                    quadraticBezierTo(w * 0.99f, h * 0.36f, w * 0.97f, h * 0.52f); lineTo(w * 0.93f, h * 0.90f)
+                    quadraticBezierTo(w * 0.92f, h, w * 0.85f, h); lineTo(w * 0.15f, h)
+                    quadraticBezierTo(w * 0.08f, h, w * 0.07f, h * 0.90f); lineTo(w * 0.03f, h * 0.52f)
+                    quadraticBezierTo(w * 0.01f, h * 0.36f, w * 0.08f, h * 0.34f); close()
                 }
                 drawPath(body, Brush.verticalGradient(listOf(Color(0xFF6D4C41), Color(0xFF4E342E), Color(0xFF33221B)), startY = h * 0.3f, endY = h), alpha = a)
-                // flap
                 val flap = Path().apply {
                     moveTo(w * 0.05f, h * 0.36f); lineTo(w * 0.95f, h * 0.36f)
-                    lineTo(w * 0.90f, h * 0.62f); quadTo(w * 0.5f, h * 0.74f, w * 0.10f, h * 0.62f); close()
+                    lineTo(w * 0.90f, h * 0.62f); quadraticBezierTo(w * 0.5f, h * 0.74f, w * 0.10f, h * 0.62f); close()
                 }
                 drawPath(flap, Brush.verticalGradient(listOf(Color(0xFF795548), Color(0xFF4E342E)), startY = h * 0.3f, endY = h * 0.75f), alpha = a)
-                // hand stitching: dashed pale-tan seam along the flap edge
-                val stitch = Path().apply { moveTo(w * 0.10f, h * 0.60f); quadTo(w * 0.5f, h * 0.71f, w * 0.90f, h * 0.60f) }
+                val stitch = Path().apply { moveTo(w * 0.10f, h * 0.60f); quadraticBezierTo(w * 0.5f, h * 0.71f, w * 0.90f, h * 0.60f) }
                 drawPath(stitch, Color(0x99D7CCC8), style = Stroke(width = 1.6f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f)), alpha = a)
-                // brass buckle + prong
                 drawRect(Color(0xFFC9A227), topLeft = Offset(w * 0.455f, h * 0.56f), size = Size(w * 0.09f, h * 0.12f), alpha = a)
                 drawRect(Color(0xFF33221B), topLeft = Offset(w * 0.475f, h * 0.585f), size = Size(w * 0.05f, h * 0.07f), alpha = a)
                 drawLine(Color(0xFFC9A227), Offset(w * 0.5f, h * 0.585f), Offset(w * 0.5f, h * 0.645f), strokeWidth = 2f, alpha = a)
-                // single white impasto highlight
                 drawOval(Color(0x2EFFFFFF), topLeft = Offset(w * 0.14f, h * 0.40f), size = Size(w * 0.30f, h * 0.10f), alpha = a)
-                // handle arc
-                val handle = Path().apply { moveTo(w * 0.38f, h * 0.34f); quadTo(w * 0.5f, h * 0.10f, w * 0.62f, h * 0.34f) }
+                val handle = Path().apply { moveTo(w * 0.38f, h * 0.34f); quadraticBezierTo(w * 0.5f, h * 0.10f, w * 0.62f, h * 0.34f) }
                 drawPath(handle, Color(0xFF33221B), style = Stroke(width = 5f), alpha = a)
             }
         }
@@ -154,6 +147,7 @@ fun BlackBoxCard(trace: String, onDismiss: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EscapeGear(onTap: () -> Unit, onLong: () -> Unit) {
     Box(Modifier.size(40.dp).background(Color(0x66000000), CircleShape).combinedClickable(onClick = onTap, onLongClick = onLong), contentAlignment = Alignment.Center) {
