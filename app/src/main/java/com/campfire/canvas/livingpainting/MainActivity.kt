@@ -5,7 +5,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
@@ -20,8 +19,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -45,7 +42,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -54,7 +50,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -77,11 +72,10 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         audio.resume(); viewModel.isPaused.value = false
-        runCatching { // true latitude for the astronomical sun, if granted
+        runCatching {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                 val lm = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
-                val prov = lm.getProviders(true, false)
-                for (pn in prov) {
+                for (pn in lm.getProviders(true, false)) {
                     val loc = lm.getLastKnownLocation(pn)
                     if (loc != null) { viewModel.setLatitude(loc.latitude); break }
                 }
@@ -91,7 +85,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        audio.pause(); viewModel.isPaused.value = true // Battery Sanctity: freeze thread + audio
+        audio.pause(); viewModel.isPaused.value = true // Battery Sanctity: total freeze
     }
 
     private fun installBlackBox() {
@@ -117,7 +111,6 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Persisted scene grid (Atelier)
     val prefs = remember { context.getSharedPreferences("scene_grid", Context.MODE_PRIVATE) }
     var grid by remember { mutableStateOf(SceneGrid(
         prefs.getFloat("horizon", 0.55f), prefs.getFloat("lakeEnd", 0.75f),
@@ -136,19 +129,10 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
         val lakeBottom = size.height * grid.lakeEnd
         val fireCenter = Offset(size.width * grid.fireX, size.height * grid.fireY)
         val time = viewModel.cinematicTime.value / 1_000_000_000f
+        val night = ((-elevation) / 30f).coerceIn(0f, 1f)
+        val dusk = bell(elevation, 4f, 22f)
 
-        // Commission slot: your AI painting, if present
-        var painting by remember { mutableStateOf<ImageBitmap?>(null) }
-        var glowPaint by remember { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(Unit) {
-            withContext(Dispatchers.Default) {
-                val res = context.resources
-                fun ld(n: String): ImageBitmap? = runCatching { val id = res.getIdentifier(n, "drawable", context.packageName); if (id == 0) null else BitmapFactory.decodeResource(res, id)?.asImageBitmap() }.getOrNull()
-                painting = ld("painting_base"); glowPaint = ld("painting_glow")
-            }
-        }
-
-        // Hardware-cached static world (Layers 1-4), repainted on worker thread
+        // The engine's own underpainting: cached, code-generated, never a file
         var world by remember { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(size, repaintKey, grid.horizon, grid.lakeEnd, grid.fireX, grid.fireY) {
             world = withContext(Dispatchers.Default) {
@@ -156,7 +140,7 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
             }
         }
 
-        // Burn mechanic: 150s linear Animatable per log, max 5 concurrent
+        // Burn mechanic: 150s linear Animatable per log, max 5
         val burns = remember { mutableStateListOf<Animatable<Float>>() }
         val flameScale = (burns.size / 5f).coerceAtLeast(0.06f)
         LaunchedEffect(burns.size) { viewModel.setFireIntensity(burns.size / 5f); audio.updateFire(burns.size / 5f) }
@@ -168,21 +152,20 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
         var dragIdx by remember { mutableStateOf(-1) }
         var dragOff by remember { mutableStateOf(Offset.Zero) }
 
-        // Celestial positions refresh once per 60 seconds (doctrine)
+        // Celestial positions refresh once per 60 seconds
         val minuteBucket = viewModel.cinematicTime.value / 60_000_000_000L
         var sunPos by remember { mutableStateOf(Offset(size.width / 2, size.height / 4)) }
         LaunchedEffect(minuteBucket, size) {
             val ha = viewModel.sunHourAngle.value
             val el = viewModel.sunElevation.value
-            val x = size.width * (0.5f + 0.45f * sin(ha))          // wide arc across the sky
-            val y = horizonY - size.height * 0.42f * (el / 90f)
-            sunPos = Offset(x, y)
+            sunPos = Offset(size.width * (0.5f + 0.45f * sin(ha)), horizonY - size.height * 0.42f * (el / 90f))
         }
         val isDay = elevation > 0
         val lightColor = when {
             elevation > 30 -> Color(0xFFFFD54F); elevation > 0 -> Color(0xFFFF7043)
             elevation > -30 -> Color(0xFFBA68C8); else -> Color(0xFF90A4AE)
         }
+        val cloudTint = lerpColor(Color(0xFFE8EAF6), Color(0xFFE6A08C), dusk) // clouds blush at dusk
 
         androidx.compose.foundation.Canvas(Modifier.fillMaxSize().pointerInput(Unit) {
             detectDragGesturesAfterLongPress(
@@ -196,7 +179,7 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
                             audio.playDrop()
                             val anim = Animatable(0f)
                             burns.add(anim)
-                            scope.launch { anim.animateTo(1f, tween(150_000, easing = LinearEasing)); burns.remove(anim) } // exactly 150s into ash
+                            scope.launch { anim.animateTo(1f, tween(150_000, easing = LinearEasing)); burns.remove(anim) }
                         }
                     }
                     dragIdx = -1; dragOff = Offset.Zero
@@ -205,28 +188,26 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
             try {
                 val circadian = ColorFilter.colorMatrix(ColorMatrix(circadianMatrix(elevation)))
                 val w = world
-                if (painting != null) drawImage(painting!!, topLeft = Offset.Zero, colorFilter = circadian)
-                else if (w != null) drawImage(w, topLeft = Offset.Zero, colorFilter = circadian)
-                else drawRect(Brush.verticalGradient(listOf(Color(0xFF0B1021), Color(0xFF2A3B5C), Color(0xFF8C6E5D)))) // underpaint
+                if (w != null) drawImage(w, topLeft = Offset.Zero, colorFilter = circadian)
+                else drawRect(Brush.verticalGradient(listOf(Color(0xFF0B1021), Color(0xFF2A3B5C), Color(0xFF8C6E5D))))
 
+                drawTwinklingStars(size, time, night, horizonY)
+                drawClouds(size, time, horizonY, cloudTint)
                 drawCelestial(sunPos.x, if (isDay) sunPos.y else horizonY - size.height * 0.30f * sin(viewModel.sunHourAngle.value + PI.toFloat()), isDay, lightColor, size.width)
-                drawWaterLife(if (painting != null) painting else null, horizonY, lakeBottom, time, viewModel.wind.value, lightColor, size, circadian)
+                drawWaterLife(horizonY, lakeBottom, time, viewModel.wind.value, lightColor, size)
                 drawBirds(viewModel.birds.map { SumiBirdProxy(it.x, it.depth, it.phase) }, time, size)
                 drawGlazes(elevation)
 
-                // Chiaroscuro: firelight bleeding over painted grass & stones
+                // Chiaroscuro firelight bleeding over the painted hill
                 val flick = 0.9f + 0.1f * sin(time * 11f) + 0.05f * sin(time * 23f)
                 if (burns.size > 0) {
                     drawCircle(Brush.radialGradient(listOf(Color(0xFFFF6D3A).copy(alpha = 0.55f * flameScale * flick), Color(0xFFE64A19).copy(alpha = 0.22f * flameScale), Color.Transparent), center = fireCenter, radius = 720f * flameScale), blendMode = androidx.compose.ui.graphics.BlendMode.Screen)
-                    glowPaint?.let { drawImage(it, topLeft = Offset.Zero, alpha = (0.8f * flameScale * flick).coerceIn(0f, 1f), blendMode = androidx.compose.ui.graphics.BlendMode.Screen) }
                 }
 
-                // 8-stone hearth ring (doctrine)
                 for (i in 0 until 8) {
                     val a = i * (2f * PI.toFloat() / 8f)
-                    draw3DStone(Offset(fireCenter.x + 130f * cos(a), fireCenter.y + 40f * sin(a)), 17f, fireCenter, Color(0xFFFF5722), burns.size > 0)
+                    draw3DStone(Offset(fireCenter.x + 130f * kotlin.math.cos(a), fireCenter.y + 40f * sin(a)), 17f, fireCenter, Color(0xFFFF5722), burns.size > 0)
                 }
-                // burning logs shrink & darken to ash over their 150s
                 burns.forEachIndexed { i, b ->
                     val p = b.value
                     val shrink = 1f - 0.5f * p
@@ -239,17 +220,19 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
                         drawCircle(if (e.life > 0.6f) Color(0xFFFFEB3B) else Color(0xFFFF5722), radius = e.size * e.life.coerceIn(0f, 1f), center = Offset(fireCenter.x + e.x, fireCenter.y - 40f + e.y), blendMode = androidx.compose.ui.graphics.BlendMode.Screen)
                     }
                 }
-                // wood pile
                 pileSlots.forEachIndexed { i, p -> if (i < pile && i != dragIdx) draw3DLog(p, Offset(p.x + 100f, p.y - 14f), 26f, 0f, fireCenter, Color(0xFFFF5722), time) }
                 if (dragIdx != -1) { val p = pileSlots[dragIdx] + dragOff; draw3DLog(p, Offset(p.x + 100f, p.y - 14f), 26f, 0f, fireCenter, Color(0xFFFF5722), time) }
+
+                // Living foreground: swaying grass & flowers in front of everything
+                drawGrassFringe(size, time, viewModel.wind.value)
+                drawFireflies(size, time, night)
             } catch (e: Exception) { }
         }
 
-        // ---- overlays ----
         Box(Modifier.fillMaxSize()) {
             val trace = remember { context.getSharedPreferences("blackbox", Context.MODE_PRIVATE).getString("last_crash", null) }
             var showBB by remember { mutableStateOf(trace != null) }
-            if (showBB && trace != null) BlackBoxCard(trace, { context.getSharedPreferences("blackbox", Context.MODE_PRIVATE).edit().remove("last_crash").apply(); showBB = false }.let { { it() } })
+            if (showBB && trace != null) BlackBoxCard(trace) { context.getSharedPreferences("blackbox", Context.MODE_PRIVATE).edit().remove("last_crash").apply(); showBB = false }
             Column(Modifier.align(Alignment.TopStart).padding(16.dp)) {
                 EscapeGear(onTap = { runCatching { context.startActivity(Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }, onLong = { atelierOpen = !atelierOpen })
             }
