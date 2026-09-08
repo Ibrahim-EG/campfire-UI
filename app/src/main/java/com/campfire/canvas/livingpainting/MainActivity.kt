@@ -13,12 +13,11 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -42,14 +41,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -75,7 +75,7 @@ class MainActivity : ComponentActivity() {
         runCatching {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                 val lm = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
-                for (pn in lm.getProviders(true, false)) {
+                for (pn in lm.getProviders(true)) {
                     val loc = lm.getLastKnownLocation(pn)
                     if (loc != null) { viewModel.setLatitude(loc.latitude); break }
                 }
@@ -85,7 +85,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        audio.pause(); viewModel.isPaused.value = true // Battery Sanctity: total freeze
+        audio.pause(); viewModel.isPaused.value = true
     }
 
     private fun installBlackBox() {
@@ -106,10 +106,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+data class BurningLog(val startTime: Long)
+
 @Composable
 fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     val prefs = remember { context.getSharedPreferences("scene_grid", Context.MODE_PRIVATE) }
     var grid by remember { mutableStateOf(SceneGrid(
@@ -118,9 +119,8 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
     var repaintKey by remember { mutableStateOf(0) }
     var atelierOpen by remember { mutableStateOf(false) }
 
-    // 90-second cubic ease-in-out circadian bleed
     val target by viewModel.sunElevation
-    val elevation by animateFloatAsState(target, tween(90_000, easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f)), "circadian")
+    val elevation by animateFloatAsState(target, tween(90_000, easing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f)), label = "circadian")
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (constraints.maxWidth == 0 || constraints.maxHeight == 0) { Box(Modifier.fillMaxSize().background(Color.Black)); return@BoxWithConstraints }
@@ -132,7 +132,6 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
         val night = ((-elevation) / 30f).coerceIn(0f, 1f)
         val dusk = bell(elevation, 4f, 22f)
 
-        // The engine's own underpainting: cached, code-generated, never a file
         var world by remember { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(size, repaintKey, grid.horizon, grid.lakeEnd, grid.fireX, grid.fireY) {
             world = withContext(Dispatchers.Default) {
@@ -140,46 +139,63 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
             }
         }
 
-        // Burn mechanic: 150s linear Animatable per log, max 5
-        val burns = remember { mutableStateListOf<Animatable<Float>>() }
+        // Timestamp-based burn mechanic (avoids Animatable type inference traps)
+        val burns = remember { mutableStateListOf<BurningLog>() }
         val flameScale = (burns.size / 5f).coerceAtLeast(0.06f)
         LaunchedEffect(burns.size) { viewModel.setFireIntensity(burns.size / 5f); audio.updateFire(burns.size / 5f) }
+        
+        LaunchedEffect(Unit) {
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                val now = viewModel.cinematicTime.value
+                val it = burns.iterator()
+                while (it.hasNext()) {
+                    if (now - it.next().startTime >= 150_000_000_000L) it.remove()
+                }
+            }
+        }
 
-        // Wood pile with slow sustainable refill
         var pile by remember { mutableStateOf(3) }
         LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(90_000); if (!viewModel.isPaused.value && pile < 3) pile++ } }
         val pileSlots = remember(size) { listOf(Offset(size.width * 0.12f, size.height * 0.90f), Offset(size.width * 0.18f, size.height * 0.935f), Offset(size.width * 0.25f, size.height * 0.905f)) }
         var dragIdx by remember { mutableStateOf(-1) }
         var dragOff by remember { mutableStateOf(Offset.Zero) }
 
-        // Celestial positions refresh once per 60 seconds
         val minuteBucket = viewModel.cinematicTime.value / 60_000_000_000L
         var sunPos by remember { mutableStateOf(Offset(size.width / 2, size.height / 4)) }
         LaunchedEffect(minuteBucket, size) {
             val ha = viewModel.sunHourAngle.value
             val el = viewModel.sunElevation.value
-            sunPos = Offset(size.width * (0.5f + 0.45f * sin(ha)), horizonY - size.height * 0.42f * (el / 90f))
+            val sunX = size.width * (0.5f + 0.45f * sin(ha))
+            val sunY = horizonY - size.height * 0.42f * (el / 90f)
+            sunPos = Offset(sunX, sunY)
         }
         val isDay = elevation > 0
         val lightColor = when {
             elevation > 30 -> Color(0xFFFFD54F); elevation > 0 -> Color(0xFFFF7043)
             elevation > -30 -> Color(0xFFBA68C8); else -> Color(0xFF90A4AE)
         }
-        val cloudTint = lerpColor(Color(0xFFE8EAF6), Color(0xFFE6A08C), dusk) // clouds blush at dusk
+        val cloudTint = lerpColor(Color(0xFFE8EAF6), Color(0xFFE6A08C), dusk)
 
         androidx.compose.foundation.Canvas(Modifier.fillMaxSize().pointerInput(Unit) {
             detectDragGesturesAfterLongPress(
-                onDragStart = { o -> pileSlots.forEachIndexed { i, p -> if (i < pile && o.x > p.x - 20 && o.x < p.x + 120 && o.y > p.y - 20 && o.y < p.y + 40) { dragIdx = i; dragOff = Offset.Zero } } },
-                onDrag = { ch, da -> if (dragIdx != -1) { dragOff += da; ch.consume() } },
+                onDragStart = { offset: Offset -> 
+                    pileSlots.forEachIndexed { i, p -> 
+                        if (i < pile && offset.x > p.x - 20 && offset.x < p.x + 120 && offset.y > p.y - 20 && offset.y < p.y + 40) { 
+                            dragIdx = i; dragOff = Offset.Zero 
+                        } 
+                    } 
+                },
+                onDrag = { change: PointerInputChange, dragAmount: Offset -> 
+                    if (dragIdx != -1) { dragOff += dragAmount; change.consume() } 
+                },
                 onDragEnd = {
                     if (dragIdx != -1) {
                         val drop = pileSlots[dragIdx] + dragOff
                         if (sqrt((drop.x - fireCenter.x) * (drop.x - fireCenter.x) + (drop.y - fireCenter.y) * (drop.y - fireCenter.y)) < 160f && burns.size < 5) {
                             pile--
                             audio.playDrop()
-                            val anim = Animatable(0f)
-                            burns.add(anim)
-                            scope.launch { anim.animateTo(1f, tween(150_000, easing = LinearEasing)); burns.remove(anim) }
+                            burns.add(BurningLog(viewModel.cinematicTime.value))
                         }
                     }
                     dragIdx = -1; dragOff = Offset.Zero
@@ -193,26 +209,39 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
 
                 drawTwinklingStars(size, time, night, horizonY)
                 drawClouds(size, time, horizonY, cloudTint)
-                drawCelestial(sunPos.x, if (isDay) sunPos.y else horizonY - size.height * 0.30f * sin(viewModel.sunHourAngle.value + PI.toFloat()), isDay, lightColor, size.width)
+                
+                val ha = viewModel.sunHourAngle.value
+                val moonY = horizonY - size.height * 0.30f * sin(ha + PI.toFloat())
+                drawCelestial(sunPos.x, if (isDay) sunPos.y else moonY, isDay, lightColor, size.width)
+                
                 drawWaterLife(horizonY, lakeBottom, time, viewModel.wind.value, lightColor, size)
                 drawBirds(viewModel.birds.map { SumiBirdProxy(it.x, it.depth, it.phase) }, time, size)
                 drawGlazes(elevation)
 
-                // Chiaroscuro firelight bleeding over the painted hill
                 val flick = 0.9f + 0.1f * sin(time * 11f) + 0.05f * sin(time * 23f)
                 if (burns.size > 0) {
                     drawCircle(Brush.radialGradient(listOf(Color(0xFFFF6D3A).copy(alpha = 0.55f * flameScale * flick), Color(0xFFE64A19).copy(alpha = 0.22f * flameScale), Color.Transparent), center = fireCenter, radius = 720f * flameScale), blendMode = androidx.compose.ui.graphics.BlendMode.Screen)
                 }
 
+                val now = viewModel.cinematicTime.value
                 for (i in 0 until 8) {
                     val a = i * (2f * PI.toFloat() / 8f)
-                    draw3DStone(Offset(fireCenter.x + 130f * kotlin.math.cos(a), fireCenter.y + 40f * sin(a)), 17f, fireCenter, Color(0xFFFF5722), burns.size > 0)
+                    val sx = fireCenter.x + 130f * cos(a)
+                    val sy = fireCenter.y + 40f * sin(a)
+                    draw3DStone(Offset(sx, sy), 17f, fireCenter, Color(0xFFFF5722), burns.size > 0)
                 }
+                
                 burns.forEachIndexed { i, b ->
-                    val p = b.value
+                    val elapsed = (now - b.startTime) / 1000_000_000f
+                    val p = (elapsed / 150f).coerceIn(0f, 1f)
                     val shrink = 1f - 0.5f * p
-                    draw3DLog(Offset(fireCenter.x - 66f * shrink, fireCenter.y + 8f - i * 10f), Offset(fireCenter.x + 66f * shrink, fireCenter.y - 4f - i * 10f), 20f * shrink, p, fireCenter, Color(0xFFFF5722), time)
+                    draw3DLog(
+                        Offset(fireCenter.x - 66f * shrink, fireCenter.y + 8f - i * 10f), 
+                        Offset(fireCenter.x + 66f * shrink, fireCenter.y - 4f - i * 10f), 
+                        20f * shrink, p, fireCenter, Color(0xFFFF5722), time
+                    )
                 }
+                
                 if (burns.size > 0) {
                     drawFlame(fireCenter, flameScale * flick, time)
                     drawSmoke(fireCenter, flameScale, time, viewModel.wind.value, flameScale)
@@ -220,10 +249,10 @@ fun CampfireRoot(viewModel: PaintingViewModel, audio: CozyAudioEngine) {
                         drawCircle(if (e.life > 0.6f) Color(0xFFFFEB3B) else Color(0xFFFF5722), radius = e.size * e.life.coerceIn(0f, 1f), center = Offset(fireCenter.x + e.x, fireCenter.y - 40f + e.y), blendMode = androidx.compose.ui.graphics.BlendMode.Screen)
                     }
                 }
+                
                 pileSlots.forEachIndexed { i, p -> if (i < pile && i != dragIdx) draw3DLog(p, Offset(p.x + 100f, p.y - 14f), 26f, 0f, fireCenter, Color(0xFFFF5722), time) }
                 if (dragIdx != -1) { val p = pileSlots[dragIdx] + dragOff; draw3DLog(p, Offset(p.x + 100f, p.y - 14f), 26f, 0f, fireCenter, Color(0xFFFF5722), time) }
 
-                // Living foreground: swaying grass & flowers in front of everything
                 drawGrassFringe(size, time, viewModel.wind.value)
                 drawFireflies(size, time, night)
             } catch (e: Exception) { }
